@@ -6,7 +6,7 @@ layout(location = 0) in vec3 aPosition;
 // This is where the color values we assigned in the main program goes to
 layout(location = 1) in vec3 aColor;
 
-out vec3 ourColor; // output a color to the fragment shader
+out vec3 vertexColor; // output a color to the fragment shader
 
 void main(void)
 {
@@ -14,5 +14,5 @@ void main(void)
     gl_Position = vec4(aPosition, 1.0); 
 
 	// We use the outColor variable to pass on the color information to the frag shader
-	ourColor = aColor;
+	vertexColor = aColor;
 }
