@@ -41,5 +41,19 @@ public class BasicLoggingToFile : IDisposable
         microsoftLogger.LogInformation(expected);
         File.ReadAllText(filePath).Should().Be(expected);
     }
+
+
+    [Theory, AutoData]
+    public void MultipleLogsInSingleLine(string filePath)
+    {
+        _filePath = filePath;
+        var expected = "Hello, world! Goodbye, world! ";
+        var log = new LoggerConfiguration()
+            .WriteTo.File(filePath, outputTemplate: "{Message} ")
+            .CreateLogger();
+        log.Write(LogEventLevel.Information, "Hello, world!");
+        log.Write(LogEventLevel.Information, "Goodbye, world!");
+        File.ReadAllText(filePath).Should().Be(expected);
+    }
 }
 
