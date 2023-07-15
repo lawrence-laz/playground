@@ -1,0 +1,19 @@
+ffmpeg -i video.mp4 -r 1 frames/frame_%02d.jpg
+
+
+
+ffmpeg -i in.mp4 -vf "select='lt(mod(t,60),1)',setpts=N/FRAME_RATE/TB" out.mp4 -af "aselect='lt(mod(t,60),1)',asetpts=N/SR/TB"
+
+
+audio isnt cut up, also, how to save as separate files?
+
+
+ffmpeg -ss 360 -i video.mp4 -t 5 out3.mp4
+
+ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=noprint_wrappers=1:nokey=1 video.mp4
+
+
+
+# This allows to set framerate, resolution and name of the output frames
+ffmpeg -i out2.mp4 -s 307x384 -vf fps=10 'frames/%06d.bmp'
+
