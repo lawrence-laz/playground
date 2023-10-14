@@ -78,3 +78,22 @@ test getNth {
         try std.testing.expectError(ArayAcessError.IndexOutOfRange, getNth(list, 1));
     }
 }
+
+// #4 Find the number of elements of a list.
+fn length(list: std.ArrayList(u8)) usize {
+    var size: usize = 0;
+    for (list.items) |_| {
+        size += 1;
+    }
+    return size;
+}
+
+test length {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('d');
+    try std.testing.expectEqual(length(list), 4);
+}
