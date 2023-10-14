@@ -132,3 +132,37 @@ test reverse {
         try std.testing.expectEqual(list.items[0], 'a');
     }
 }
+
+// #6 Find out whether a list is a palindrome.
+fn isPalindrome(list: std.ArrayList(u8)) bool {
+    if (list.items.len < 2) {
+        return true;
+    }
+    for (0..list.items.len / 2) |i| {
+        if (list.items[i] != list.items[list.items.len - 1 - i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+test isPalindrome {
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.append('a');
+        try list.append('b');
+        try list.append('c');
+        try list.append('d');
+        try std.testing.expectEqual(isPalindrome(list), false);
+    }
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.append('a');
+        try list.append('b');
+        try list.append('b');
+        try list.append('a');
+        try std.testing.expectEqual(isPalindrome(list), true);
+    }
+}
