@@ -97,3 +97,38 @@ test length {
     try list.append('d');
     try std.testing.expectEqual(length(list), 4);
 }
+
+// #5 Reverse a list.
+fn reverse(list: std.ArrayList(u8)) void {
+    if (list.items.len < 2) {
+        return;
+    }
+    for (0..list.items.len / 2) |i| {
+        const temp = list.items[i];
+        list.items[i] = list.items[list.items.len - i - 1];
+        list.items[list.items.len - i - 1] = temp;
+    }
+}
+
+test reverse {
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.append('a');
+        try list.append('b');
+        try list.append('c');
+        try list.append('d');
+        reverse(list);
+        try std.testing.expectEqual(list.items[0], 'd');
+        try std.testing.expectEqual(list.items[1], 'c');
+        try std.testing.expectEqual(list.items[2], 'b');
+        try std.testing.expectEqual(list.items[3], 'a');
+    }
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.append('a');
+        reverse(list);
+        try std.testing.expectEqual(list.items[0], 'a');
+    }
+}
