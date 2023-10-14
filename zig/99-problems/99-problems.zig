@@ -166,3 +166,45 @@ test isPalindrome {
         try std.testing.expectEqual(isPalindrome(list), true);
     }
 }
+
+// #7 Flatten a nested list structure.
+const NodeTag = enum {
+    one,
+    many,
+};
+
+fn Node(comptime T: type) type {
+    return union(NodeTag) {
+        one: T,
+        many: []Node(T),
+    };
+}
+
+fn flatten(root: Node(u8), allocator: std.mem.Allocator) !std.ArrayList(u8) {
+    var values_list = std.ArrayList(u8).init(allocator);
+    var node_stack = std.ArrayList(Node(u8)).init(allocator);
+    defer node_stack.deinit();
+    try node_stack.append(root);
+    while (node_stack.popOrNull()) |node| {
+        switch (node) {
+            NodeTag.one => |value| try values_list.append(value),
+            NodeTag.many => |child_nodes| for (child_nodes) |child_node| {
+                try node_stack.append(child_node);
+            },
+        }
+    }
+    return values_list;
+}
+
+test flatten {
+    var grandchildren = [_]Node(u8){ .{ .one = 'b' }, .{ .one = 'c' } };
+    var children = [_]Node(u8){ .{ .one = 'a' }, .{ .many = &grandchildren }, .{ .one = 'd' } };
+    const root: Node(u8) = .{ .many = &children };
+    var flattened = try flatten(root, std.testing.allocator);
+    defer flattened.deinit();
+    try std.testing.expectEqual(flattened.items.len, 4);
+    try std.testing.expectEqual(flattened.items[0], 'd');
+    try std.testing.expectEqual(flattened.items[1], 'c');
+    try std.testing.expectEqual(flattened.items[2], 'b');
+    try std.testing.expectEqual(flattened.items[3], 'a');
+}
