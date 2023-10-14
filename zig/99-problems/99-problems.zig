@@ -1,3 +1,7 @@
+// These problems are more suited for functional languages.
+// Nevertheless, an exercise always brings some benefit.
+// Source: https://v2.ocaml.org/learn/tutorials/99problems.html
+
 const std = @import("std");
 
 // #1 Write a function that returns the last element of a list.
@@ -41,5 +45,36 @@ test lastTwo {
         defer list.deinit();
         try list.append('a');
         try std.testing.expect(lastTwo(list) == null);
+    }
+}
+
+// #3 Find the N'th element of a list.
+fn getNth(list: std.ArrayList(u8), index: usize) ArayAcessError!u8 {
+    return if (list.items.len >= index)
+        list.items[index]
+    else
+        error.IndexOutOfRange;
+}
+
+const ArayAcessError = error{
+    IndexOutOfRange,
+};
+
+test getNth {
+    {
+        // List contains N'th.
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.append('a');
+        try list.append('b');
+        try list.append('c');
+        try list.append('d');
+        try std.testing.expectEqual(getNth(list, 1), 'b');
+    }
+    {
+        // List does not contain N'th.
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try std.testing.expectError(ArayAcessError.IndexOutOfRange, getNth(list, 1));
     }
 }
