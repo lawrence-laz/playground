@@ -208,3 +208,37 @@ test flatten {
     try std.testing.expectEqual(flattened.items[2], 'b');
     try std.testing.expectEqual(flattened.items[3], 'a');
 }
+
+// #8 Eliminate consecutive duplicates of list elements.
+fn removeConsecutiveDuplicates(list: *std.ArrayList(u8)) void {
+    var i: usize = 0;
+    var previous_value_or_null: ?u8 = null;
+    while (i < list.items.len) {
+        const current_value = list.items[i];
+        if (previous_value_or_null) |previous_value| {
+            if (previous_value == current_value) {
+                _ = list.orderedRemove(i);
+                continue;
+            }
+        }
+        previous_value_or_null = current_value;
+        i += 1;
+    }
+}
+
+test removeConsecutiveDuplicates {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('c');
+    try list.append('d');
+    removeConsecutiveDuplicates(&list);
+    try std.testing.expectEqual(list.items[0], 'a');
+    try std.testing.expectEqual(list.items[1], 'b');
+    try std.testing.expectEqual(list.items[2], 'c');
+    try std.testing.expectEqual(list.items[3], 'd');
+    try std.testing.expectEqual(list.items.len, 4);
+}
