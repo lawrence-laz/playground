@@ -242,3 +242,47 @@ test removeConsecutiveDuplicates {
     try std.testing.expectEqual(list.items[3], 'd');
     try std.testing.expectEqual(list.items.len, 4);
 }
+
+// #9 Pack consecutive duplicates of list elements into sublists.
+fn packConsecutiveDuplicatesIntoSublists(comptime T: type, allocator: std.mem.Allocator, list: *std.ArrayList(T)) !std.ArrayList(std.ArrayList(T)) {
+    var result = std.ArrayList(std.ArrayList(T)).init(allocator);
+    var sublist = std.ArrayList(T).init(allocator);
+    var maybePreviousItem: ?T = null;
+    for (list.items) |item| {
+        if (maybePreviousItem) |previousItem| {
+            if (item != previousItem) {
+                try result.append(sublist);
+                sublist = std.ArrayList(T).init(allocator);
+            }
+        }
+        maybePreviousItem = item;
+        try sublist.append(item);
+    }
+    try result.append(sublist);
+    return result;
+}
+
+test packConsecutiveDuplicatesIntoSublists {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('c');
+    const sublists = try packConsecutiveDuplicatesIntoSublists(u8, std.testing.allocator, &list);
+    defer {
+        for (sublists.items) |sublist| {
+            sublist.deinit();
+        }
+        sublists.deinit();
+    }
+    try std.testing.expectEqual(sublists.items[0].items[0], 'a');
+    try std.testing.expectEqual(sublists.items[0].items[1], 'a');
+    try std.testing.expectEqual(sublists.items[0].items.len, 2);
+    try std.testing.expectEqual(sublists.items[1].items[0], 'b');
+    try std.testing.expectEqual(sublists.items[1].items.len, 1);
+    try std.testing.expectEqual(sublists.items[2].items[0], 'c');
+    try std.testing.expectEqual(sublists.items[2].items[1], 'c');
+    try std.testing.expectEqual(sublists.items[2].items.len, 2);
+}
