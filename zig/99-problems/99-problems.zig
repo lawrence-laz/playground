@@ -286,3 +286,54 @@ test packConsecutiveDuplicatesIntoSublists {
     try std.testing.expectEqual(sublists.items[2].items[1], 'c');
     try std.testing.expectEqual(sublists.items[2].items.len, 2);
 }
+
+// #10 Run-length encoding of a list.
+fn EncodedEntry(comptime T: type) type {
+    return struct {
+        item: T,
+        count: usize,
+    };
+}
+
+fn runLengthEncode(comptime T: type, list: *std.ArrayList(T), allocator: std.mem.Allocator) !std.ArrayList(EncodedEntry(T)) {
+    var encodedList = std.ArrayList(EncodedEntry(T)).init(allocator);
+    if (list.items.len == 0) {
+        return encodedList;
+    }
+    var lastEncodedItem: EncodedEntry(T) = .{
+        .item = list.items[0],
+        .count = 0,
+    };
+    for (list.items) |item| {
+        if (lastEncodedItem.item != item) {
+            try encodedList.append(lastEncodedItem);
+            lastEncodedItem = .{
+                .item = item,
+                .count = 0,
+            };
+        }
+        lastEncodedItem.count += 1;
+    }
+    if (lastEncodedItem.count != 0) {
+        try encodedList.append(lastEncodedItem);
+    }
+    return encodedList;
+}
+
+test runLengthEncode {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('c');
+    var encodedList = try runLengthEncode(u8, &list, std.testing.allocator);
+    defer encodedList.deinit();
+    try std.testing.expectEqual(encodedList.items[0].item, 'a');
+    try std.testing.expectEqual(encodedList.items[0].count, 2);
+    try std.testing.expectEqual(encodedList.items[1].item, 'b');
+    try std.testing.expectEqual(encodedList.items[1].count, 1);
+    try std.testing.expectEqual(encodedList.items[2].item, 'c');
+    try std.testing.expectEqual(encodedList.items[2].count, 2);
+}
