@@ -337,3 +337,62 @@ test runLengthEncode {
     try std.testing.expectEqual(encodedList.items[2].item, 'c');
     try std.testing.expectEqual(encodedList.items[2].count, 2);
 }
+
+// #11 Modified run-length encoding.
+const EncodedItemTag = enum {
+    one,
+    many,
+};
+
+fn EncodedItem(comptime T: type) type {
+    return union(EncodedItemTag) {
+        one: T,
+        many: EncodedEntry(T),
+    };
+}
+
+fn modifiedRunLengthEncode(comptime T: type, list: *std.ArrayList(T), allocator: std.mem.Allocator) !std.ArrayList(EncodedItem(T)) {
+    var encodedList = std.ArrayList(EncodedItem(T)).init(allocator);
+    if (list.items.len == 0) {
+        return encodedList;
+    }
+    var lastEncodedItem: EncodedItem(T) = .{ .many = .{
+        .item = list.items[0],
+        .count = 0,
+    } };
+    for (list.items) |item| {
+        if (lastEncodedItem.many.item != item) {
+            if (lastEncodedItem.many.count == 1) {
+                try encodedList.append(.{ .one = lastEncodedItem.many.item });
+            } else {
+                try encodedList.append(lastEncodedItem);
+            }
+            lastEncodedItem = .{ .many = .{
+                .item = item,
+                .count = 0,
+            } };
+        }
+        lastEncodedItem.many.count += 1;
+    }
+    if (lastEncodedItem.many.count == 1) {
+        try encodedList.append(.{ .one = lastEncodedItem.many.item });
+    } else if (lastEncodedItem.many.count > 1) {
+        try encodedList.append(lastEncodedItem);
+    }
+    return encodedList;
+}
+
+test modifiedRunLengthEncode {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('c');
+    var encodedList = try modifiedRunLengthEncode(u8, &list, std.testing.allocator);
+    defer encodedList.deinit();
+    try std.testing.expectEqual(encodedList.items[0].many, .{ .item = 'a', .count = 2 });
+    try std.testing.expectEqual(encodedList.items[1].one, 'b');
+    try std.testing.expectEqual(encodedList.items[2].many, .{ .item = 'c', .count = 2 });
+}
