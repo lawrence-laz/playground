@@ -396,3 +396,36 @@ test modifiedRunLengthEncode {
     try std.testing.expectEqual(encodedList.items[1].one, 'b');
     try std.testing.expectEqual(encodedList.items[2].many, .{ .item = 'c', .count = 2 });
 }
+
+// #12 Decode a run-length encoded list.
+fn decodeRunLength(comptime T: type, encodedList: *std.ArrayList(EncodedItem(T)), allocator: std.mem.Allocator) !std.ArrayList(T) {
+    var decoded_list = std.ArrayList(T).init(allocator);
+    for (encodedList.items) |encoded_item| {
+        switch (encoded_item) {
+            EncodedItemTag.one => {
+                try decoded_list.append(encoded_item.one);
+            },
+            EncodedItemTag.many => {
+                for (0..encoded_item.many.count) |_| {
+                    try decoded_list.append(encoded_item.many.item);
+                }
+            },
+        }
+    }
+    return decoded_list;
+}
+
+test decodeRunLength {
+    var encoded_list = std.ArrayList(EncodedItem(u8)).init(std.testing.allocator);
+    defer encoded_list.deinit();
+    try encoded_list.append(.{ .many = .{ .count = 2, .item = 'a' } });
+    try encoded_list.append(.{ .one = 'b' });
+    try encoded_list.append(.{ .many = .{ .count = 2, .item = 'c' } });
+    var decoded_list = try decodeRunLength(u8, &encoded_list, std.testing.allocator);
+    defer decoded_list.deinit();
+    try std.testing.expectEqual(decoded_list.items[0], 'a');
+    try std.testing.expectEqual(decoded_list.items[1], 'a');
+    try std.testing.expectEqual(decoded_list.items[2], 'b');
+    try std.testing.expectEqual(decoded_list.items[3], 'c');
+    try std.testing.expectEqual(decoded_list.items[4], 'c');
+}
