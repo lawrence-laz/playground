@@ -432,3 +432,26 @@ test decodeRunLength {
 
 // #13. Run-length encoding of a list (direct solution).
 // Duplicate of #11.
+
+// #14. Duplicate the elements of a list.
+fn duplicateElements(comptime T: type, list: *std.ArrayList(T), allocator: std.mem.Allocator) !std.ArrayList(T) {
+    var duplicated_list = try std.ArrayList(T).initCapacity(allocator, list.items.len * 2);
+    for (list.items) |item| {
+        try duplicated_list.append(item);
+        try duplicated_list.append(item);
+    }
+    return duplicated_list;
+}
+
+test duplicateElements {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('c');
+    try list.append('d');
+    var duplicated_list = try duplicateElements(u8, &list, std.testing.allocator);
+    defer duplicated_list.deinit();
+    try std.testing.expectEqualSlices(u8, duplicated_list.items, &[_]u8{ 'a', 'a', 'b', 'b', 'c', 'c', 'c', 'c', 'd', 'd' });
+}
