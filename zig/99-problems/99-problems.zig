@@ -429,3 +429,6 @@ test decodeRunLength {
     try std.testing.expectEqual(decoded_list.items[3], 'c');
     try std.testing.expectEqual(decoded_list.items[4], 'c');
 }
+
+// #13. Run-length encoding of a list (direct solution).
+// Duplicate of #11.
