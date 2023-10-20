@@ -455,3 +455,23 @@ test duplicateElements {
     defer duplicated_list.deinit();
     try std.testing.expectEqualSlices(u8, duplicated_list.items, &[_]u8{ 'a', 'a', 'b', 'b', 'c', 'c', 'c', 'c', 'd', 'd' });
 }
+
+// #15. Replicate the elements of a list a given number of times.
+fn replicate(comptime T: type, list: *std.ArrayList(T), count: usize, allocator: std.mem.Allocator) !std.ArrayList(T) {
+    var replicated_list = try std.ArrayList(T).initCapacity(allocator, list.items.len * count);
+    for (list.items) |item| {
+        for (0..count) |_| {
+            try replicated_list.append(item);
+        }
+    }
+    return replicated_list;
+}
+
+test replicate {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    var replicated_list = try replicate(u8, &list, 3, std.testing.allocator);
+    try std.testing.expectEqualSlices(u8, replicated_list.items, &[_]u8{ 'a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c' });
+}
