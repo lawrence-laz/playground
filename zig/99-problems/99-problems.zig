@@ -475,3 +475,29 @@ test replicate {
     var replicated_list = try replicate(u8, &list, 3, std.testing.allocator);
     try std.testing.expectEqualSlices(u8, replicated_list.items, &[_]u8{ 'a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c' });
 }
+
+// #16. Drop every N'th element from a list.
+fn dropEveryNth(comptime T: type, list: *std.ArrayList(T), n: usize) void {
+    var index: usize = n - 1;
+    while (index < list.items.len) {
+        _ = list.orderedRemove(index);
+        index += n - 1;
+    }
+}
+
+test dropEveryNth {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('d');
+    try list.append('e');
+    try list.append('f');
+    try list.append('g');
+    try list.append('h');
+    try list.append('i');
+    try list.append('j');
+    dropEveryNth(u8, &list, 3);
+    try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'a', 'b', 'd', 'e', 'g', 'h', 'j' });
+}
