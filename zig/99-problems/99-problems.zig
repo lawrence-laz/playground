@@ -469,10 +469,12 @@ fn replicate(comptime T: type, list: *std.ArrayList(T), count: usize, allocator:
 
 test replicate {
     var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
     try list.append('a');
     try list.append('b');
     try list.append('c');
     var replicated_list = try replicate(u8, &list, 3, std.testing.allocator);
+    defer replicated_list.deinit();
     try std.testing.expectEqualSlices(u8, replicated_list.items, &[_]u8{ 'a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c' });
 }
 
@@ -500,4 +502,42 @@ test dropEveryNth {
     try list.append('j');
     dropEveryNth(u8, &list, 3);
     try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'a', 'b', 'd', 'e', 'g', 'h', 'j' });
+}
+
+// #17. Split a list into two parts; the length of the first part is given.
+fn split(comptime T: type, list: *std.ArrayList(T), split_size: usize) struct { first: ?[]T, second: ?[]T } {
+    var first_size = @min(list.items.len, split_size);
+    var first = if (first_size > 0) list.items[0..first_size] else null;
+    var second = if (split_size < list.items.len) list.items[split_size..] else null;
+    return .{ .first = first, .second = second };
+}
+
+test "split both populated" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('d');
+    try list.append('e');
+    try list.append('f');
+    try list.append('g');
+    try list.append('h');
+    try list.append('i');
+    try list.append('j');
+    var result = split(u8, &list, 3);
+    try std.testing.expectEqualSlices(u8, result.first.?, &[_]u8{ 'a', 'b', 'c' });
+    try std.testing.expectEqualSlices(u8, result.second.?, &[_]u8{ 'd', 'e', 'f', 'g', 'h', 'i', 'j' });
+}
+
+test "split second empty" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.append('a');
+    try list.append('b');
+    try list.append('c');
+    try list.append('d');
+    var result = split(u8, &list, 5);
+    try std.testing.expectEqualSlices(u8, result.first.?, &[_]u8{ 'a', 'b', 'c', 'd' });
+    try std.testing.expectEqual(result.second, null);
 }
