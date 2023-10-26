@@ -541,3 +541,22 @@ test "split second empty" {
     try std.testing.expectEqualSlices(u8, result.first.?, &[_]u8{ 'a', 'b', 'c', 'd' });
     try std.testing.expectEqual(result.second, null);
 }
+
+// # 18. Extract a slice from a list.
+fn getSlice(comptime T: type, list: *std.ArrayList(T), start: usize, end: usize) ![]T {
+    if (start >= list.items.len or end >= list.items.len) {
+        return error.IndexOutOfRange;
+    }
+    return list.items[start .. end + 1];
+}
+
+test getSlice {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.appendSlice(&[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j' });
+    var actual = try getSlice(u8, &list, 2, 6);
+    try std.testing.expectEqualSlices(u8, actual, &[_]u8{ 'c', 'd', 'e', 'f', 'g' });
+
+    try std.testing.expectError(error.IndexOutOfRange, getSlice(u8, &list, 10, 11));
+    try std.testing.expectError(error.IndexOutOfRange, getSlice(u8, &list, 9, 10));
+}
