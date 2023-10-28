@@ -542,7 +542,7 @@ test "split second empty" {
     try std.testing.expectEqual(result.second, null);
 }
 
-// # 18. Extract a slice from a list.
+// #18. Extract a slice from a list.
 fn getSlice(comptime T: type, list: *std.ArrayList(T), start: usize, end: usize) ![]T {
     if (start >= list.items.len or end >= list.items.len) {
         return error.IndexOutOfRange;
@@ -559,4 +559,57 @@ test getSlice {
 
     try std.testing.expectError(error.IndexOutOfRange, getSlice(u8, &list, 10, 11));
     try std.testing.expectError(error.IndexOutOfRange, getSlice(u8, &list, 9, 10));
+}
+
+fn reverseSlice(comptime T: type, list: []T) void {
+    if (list.len < 2) {
+        return;
+    }
+    for (0..list.len / 2) |i| {
+        const temp = list[i];
+        list[i] = list[list.len - i - 1];
+        list[list.len - i - 1] = temp;
+    }
+}
+
+// #19. Rotate a list N places to the left (or right).
+fn rotate(comptime T: type, list: *std.ArrayList(T), offset: i32) void {
+    var list_length: i32 = @intCast(list.items.len);
+    var offset_truncated: usize = @intCast(@mod(offset, list_length));
+    var offset_sign = std.math.sign(offset);
+    if (offset_sign == 1) {
+        reverseSlice(T, list.items[0 .. list.items.len - offset_truncated]);
+        reverseSlice(T, list.items[list.items.len - offset_truncated ..]);
+        reverseSlice(T, list.items);
+    } else if (offset_sign == -1) {
+        reverseSlice(T, list.items[0..offset_truncated]);
+        reverseSlice(T, list.items[offset_truncated..]);
+        reverseSlice(T, list.items);
+    } else {
+        // Zero offset, do nothing.
+    }
+}
+
+test rotate {
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' });
+        rotate(u8, &list, -5);
+        try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'd', 'e', 'f', 'g', 'h', 'a', 'b', 'c' });
+    }
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' });
+        rotate(u8, &list, 2);
+        try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'g', 'h', 'a', 'b', 'c', 'd', 'e', 'f' });
+    }
+    {
+        var list = std.ArrayList(u8).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' });
+        rotate(u8, &list, 0);
+        try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' });
+    }
 }
