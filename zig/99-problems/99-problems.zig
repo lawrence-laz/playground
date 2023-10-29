@@ -613,3 +613,17 @@ test rotate {
         try std.testing.expectEqualSlices(u8, list.items, &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' });
     }
 }
+
+// #20. Remove the K'th element from a list.
+// Using these trivial ones as an opportunity to learn standard lib.
+fn removeKth(comptime T: type, list: *std.ArrayList(T), remove_index: usize) void {
+    _ = list.orderedRemove(remove_index);
+}
+
+test removeKth {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try list.appendSlice("abcd");
+    removeKth(u8, &list, 1);
+    try std.testing.expectEqualSlices(u8, list.items, "acd");
+}
