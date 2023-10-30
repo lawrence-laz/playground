@@ -627,3 +627,33 @@ test removeKth {
     removeKth(u8, &list, 1);
     try std.testing.expectEqualSlices(u8, list.items, "acd");
 }
+
+// #21. Insert an element at a given position into a list.
+const String = []const u8;
+fn insert(comptime T: type, list: *std.ArrayList(T), item: T, index: usize) !void {
+    try list.insert(index, item);
+}
+
+test insert {
+    {
+        var list = std.ArrayList(String).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]String{ "a", "b", "c", "d" });
+        try insert(String, &list, "alfa", 1);
+        try std.testing.expectEqualSlices(String, list.items, &[_]String{ "a", "alfa", "b", "c", "d" });
+    }
+    {
+        var list = std.ArrayList(String).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]String{ "a", "b", "c", "d" });
+        try insert(String, &list, "alfa", 3);
+        try std.testing.expectEqualSlices(String, list.items, &[_]String{ "a", "b", "c", "alfa", "d" });
+    }
+    {
+        var list = std.ArrayList(String).init(std.testing.allocator);
+        defer list.deinit();
+        try list.appendSlice(&[_]String{ "a", "b", "c", "d" });
+        try insert(String, &list, "alfa", 4);
+        try std.testing.expectEqualSlices(String, list.items, &[_]String{ "a", "b", "c", "d", "alfa" });
+    }
+}
