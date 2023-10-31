@@ -660,14 +660,16 @@ test insert {
 
 // #22. Create a list containing all integers within a given range.
 inline fn range(comptime from: i32, comptime to: i32) [@abs(to - from) + 1]i32 {
-    comptime var size = @abs(to - from) + 1;
-    var range_values: [@abs(to - from) + 1]i32 = undefined;
-    var direction = std.math.sign(to - from);
-    inline for (0..size) |i| {
-        var index: i32 = @intCast(i);
-        range_values[i] = from + index * direction;
+    const size = @abs(to - from) + 1;
+    comptime {
+        var range_values: [size]i32 = undefined;
+        const direction = std.math.sign(to - from);
+        for (0..size) |i| {
+            const index: i32 = @intCast(i);
+            range_values[i] = from + index * direction;
+        }
+        return range_values;
     }
-    return range_values;
 }
 
 test range {
