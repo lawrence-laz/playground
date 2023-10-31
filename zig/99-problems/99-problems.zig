@@ -657,3 +657,27 @@ test insert {
         try std.testing.expectEqualSlices(String, list.items, &[_]String{ "a", "b", "c", "d", "alfa" });
     }
 }
+
+// #22. Create a list containing all integers within a given range.
+fn range(from: i32, to: i32, allocator: std.mem.Allocator) !std.ArrayList(i32) {
+    var list = std.ArrayList(i32).init(allocator);
+    var current = from;
+    var direction = std.math.sign(to - from);
+    while (current != to + direction) : (current += direction) {
+        try list.append(current);
+    }
+    return list;
+}
+
+test range {
+    {
+        var list = try range(4, 9, std.testing.allocator);
+        defer list.deinit();
+        try std.testing.expectEqualSlices(i32, list.items, &[_]i32{ 4, 5, 6, 7, 8, 9 });
+    }
+    {
+        var list = try range(9, 4, std.testing.allocator);
+        defer list.deinit();
+        try std.testing.expectEqualSlices(i32, list.items, &[_]i32{ 9, 8, 7, 6, 5, 4 });
+    }
+}
