@@ -709,3 +709,23 @@ test randSelect {
     defer std.testing.allocator.free(randSlice);
     try std.testing.expectEqualSlices(u8, randSlice, &[_]u8{ 'c', 'd', 'a' });
 }
+
+// #24. Lotto: Draw N different random numbers from the set 1..M. (easy)
+fn lotto_select(count: usize, max_number: usize, allocator: std.mem.Allocator) ![]usize {
+    var result = std.ArrayList(usize).init(allocator);
+    var generator = std.rand.DefaultPrng.init(0);
+    for (0..count) |_| {
+        var drawn_number = generator.random().uintAtMost(usize, max_number);
+        while (contains(usize, result.items, drawn_number)) {
+            drawn_number = generator.random().uintAtMost(usize, max_number);
+        }
+        try result.append(drawn_number);
+    }
+    return result.toOwnedSlice();
+}
+
+test lotto_select {
+    var drawn_numbers = try lotto_select(6, 49, std.testing.allocator);
+    defer std.testing.allocator.free(drawn_numbers);
+    try std.testing.expectEqualSlices(usize, drawn_numbers, &[_]usize{ 16, 19, 17, 0, 24, 1 });
+}
