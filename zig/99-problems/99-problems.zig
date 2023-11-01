@@ -676,3 +676,36 @@ test range {
     try std.testing.expectEqualSlices(i32, &range(4, 9), &[_]i32{ 4, 5, 6, 7, 8, 9 });
     try std.testing.expectEqualSlices(i32, &range(9, 4), &[_]i32{ 9, 8, 7, 6, 5, 4 });
 }
+
+// #23. Extract a given number of randomly selected elements from a list.
+// Note, this would need a seed param to be useful outside of this exercise.
+fn contains(comptime T: type, slice: []const T, seek_value: T) bool {
+    for (slice) |value| {
+        if (value == seek_value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn randSelect(comptime T: type, items: []const T, size: usize, allocator: std.mem.Allocator) ![]T {
+    var indices = std.ArrayList(usize).init(allocator);
+    defer indices.deinit();
+    var result = std.ArrayList(T).init(allocator);
+    var generator = std.rand.DefaultPrng.init(0);
+    for (0..size) |i| {
+        var random_index = generator.random().uintLessThan(usize, items.len);
+        while (contains(usize, indices.items[0..i], random_index)) {
+            random_index = generator.random().uintLessThan(usize, items.len);
+        }
+        try indices.append(random_index);
+        try result.append(items[random_index]);
+    }
+    return try result.toOwnedSlice();
+}
+
+test randSelect {
+    var randSlice = try randSelect(u8, &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' }, 3, std.testing.allocator);
+    defer std.testing.allocator.free(randSlice);
+    try std.testing.expectEqualSlices(u8, randSlice, &[_]u8{ 'c', 'd', 'a' });
+}
