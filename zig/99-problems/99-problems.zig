@@ -729,3 +729,23 @@ test lotto_select {
     defer std.testing.allocator.free(drawn_numbers);
     try std.testing.expectEqualSlices(usize, drawn_numbers, &[_]usize{ 16, 19, 17, 0, 24, 1 });
 }
+
+// #25. Generate a random permutation of the elements of a list.
+// Algorithm P (Shuffling), note that actual use, the function should accept a randomization seed.
+fn shuffle(comptime T: type, slice: []T) void {
+    var generator = std.rand.DefaultPrng.init(0);
+    var i = slice.len - 1;
+    while (i >= 1) : (i -= 1) {
+        var random_index = generator.random().uintAtMost(usize, i);
+        var temp = slice[i];
+        slice[i] = slice[random_index];
+        slice[random_index] = temp;
+    }
+}
+
+test shuffle {
+    var list = [_]u8{ 'a', 'b', 'c', 'd' };
+    list[1] = 'q';
+    shuffle(u8, &list);
+    try std.testing.expectEqualSlices(u8, &list, "cadq");
+}
