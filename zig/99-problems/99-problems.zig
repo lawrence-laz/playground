@@ -749,3 +749,135 @@ test shuffle {
     shuffle(u8, &list);
     try std.testing.expectEqualSlices(u8, &list, "cadq");
 }
+
+// #26. Generate the combinations of K distinct objects chosen from the N elements of a list.
+// This uses Twiddle algorithm https://dl.acm.org/doi/10.1145/362384.362502.
+fn combinations(comptime T: type, slice: []const T, take_count: usize, allocator: std.mem.Allocator) ![][]T {
+    var result = std.ArrayList([]T).init(allocator);
+    const N: usize = slice.len;
+    const K: usize = take_count;
+    var i: usize = 0;
+    var x: usize = 0;
+    var y: usize = 0;
+    var z: i32 = 0;
+    var p: []i32 = try allocator.alloc(i32, N + 2);
+    var b: []i32 = try allocator.alloc(i32, N);
+    inittwiddle(K, N, p);
+    var combination: []T = try allocator.alloc(T, take_count);
+    var combination_index: usize = 0;
+    while (i != N - K) : (i += 1) {
+        b[i] = 0;
+    }
+    while (i != N) : (i += 1) {
+        b[i] = 1;
+        combination[combination_index] = slice[i];
+        combination_index += 1;
+    }
+    try result.append(combination);
+    while (!twiddle(&x, &y, &z, p)) {
+        combination = try allocator.alloc(T, take_count);
+        combination_index = 0;
+        b[x] = 1;
+        b[y] = 0;
+        i = 0;
+        while (i != N) : (i += 1) {
+            if (b[i] != 0) {
+                combination[combination_index] = slice[i];
+                combination_index += 1;
+            }
+        }
+        try result.append(combination);
+    }
+    allocator.free(p);
+    allocator.free(b);
+    return result.toOwnedSlice();
+}
+
+fn twiddle(x: *usize, y: *usize, z: *i32, p: []i32) bool {
+    var i: usize = 0;
+    var j: usize = 1;
+    var k: usize = 0;
+    while (p[j] <= 0) {
+        j += 1;
+    }
+    if (p[j - 1] == 0) {
+        i = j - 1;
+        while (i != 1) : (i -= 1) {
+            p[i] = -1;
+        }
+        p[j] = 0;
+        x.* = 0;
+        z.* = 0;
+        p[1] = 1;
+        y.* = j - 1;
+    } else {
+        if (j > 1) {
+            p[j - 1] = 0;
+        }
+        j += 1;
+        while (p[j] > 0) : (j += 1) {}
+        k = j - 1;
+        i = j;
+        while (p[i] == 0) {
+            p[i] = -1;
+            i += 1;
+        }
+        if (p[i] == -1) {
+            p[i] = p[k];
+            z.* = p[k] - 1;
+            x.* = i - 1;
+            y.* = k - 1;
+            p[k] = -1;
+        } else {
+            if (i == p[0]) {
+                return true;
+            } else {
+                p[j] = p[i];
+                z.* = p[i] - 1;
+                p[i] = 0;
+                x.* = j - 1;
+                y.* = i - 1;
+            }
+        }
+    }
+
+    return false;
+}
+
+fn inittwiddle(m: usize, n: usize, p: []i32) void {
+    var i: usize = 1;
+    p[0] = @as(i32, @intCast(n)) + 1;
+    while (i != n - m + 1) : (i += 1) {
+        p[i] = 0;
+    }
+    while (i != n + 1) {
+        p[i] = @as(i32, @intCast(i + m - n));
+        i += 1;
+    }
+    p[n + 1] = -2;
+    if (m == 0) {
+        p[1] = 1;
+    }
+}
+
+test combinations {
+    var input = "abcde";
+    var result = try combinations(u8, input, 2, std.testing.allocator);
+    defer {
+        for (result) |combination| {
+            std.testing.allocator.free(combination);
+        }
+        std.testing.allocator.free(result);
+    }
+    try std.testing.expectEqual(result.len, 10);
+    try std.testing.expectEqualSlices(u8, result[0], "de");
+    try std.testing.expectEqualSlices(u8, result[1], "ae");
+    try std.testing.expectEqualSlices(u8, result[2], "be");
+    try std.testing.expectEqualSlices(u8, result[3], "ce");
+    try std.testing.expectEqualSlices(u8, result[4], "cd");
+    try std.testing.expectEqualSlices(u8, result[5], "ad");
+    try std.testing.expectEqualSlices(u8, result[6], "bd");
+    try std.testing.expectEqualSlices(u8, result[7], "bc");
+    try std.testing.expectEqualSlices(u8, result[8], "ac");
+    try std.testing.expectEqualSlices(u8, result[9], "ab");
+}
