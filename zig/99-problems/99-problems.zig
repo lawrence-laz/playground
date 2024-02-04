@@ -392,9 +392,9 @@ test modifiedRunLengthEncode {
     try list.append('c');
     var encodedList = try modifiedRunLengthEncode(u8, &list, std.testing.allocator);
     defer encodedList.deinit();
-    try std.testing.expectEqual(encodedList.items[0].many, .{ .item = 'a', .count = 2 });
+    try std.testing.expectEqual(encodedList.items[0].many, EncodedEntry(u8){ .item = 'a', .count = 2 });
     try std.testing.expectEqual(encodedList.items[1].one, 'b');
-    try std.testing.expectEqual(encodedList.items[2].many, .{ .item = 'c', .count = 2 });
+    try std.testing.expectEqual(encodedList.items[2].many, EncodedEntry(u8){ .item = 'c', .count = 2 });
 }
 
 // #12 Decode a run-length encoded list.
@@ -506,9 +506,9 @@ test dropEveryNth {
 
 // #17. Split a list into two parts; the length of the first part is given.
 fn split(comptime T: type, list: *std.ArrayList(T), split_size: usize) struct { first: ?[]T, second: ?[]T } {
-    var first_size = @min(list.items.len, split_size);
-    var first = if (first_size > 0) list.items[0..first_size] else null;
-    var second = if (split_size < list.items.len) list.items[split_size..] else null;
+    const first_size = @min(list.items.len, split_size);
+    const first = if (first_size > 0) list.items[0..first_size] else null;
+    const second = if (split_size < list.items.len) list.items[split_size..] else null;
     return .{ .first = first, .second = second };
 }
 
@@ -525,7 +525,7 @@ test "split both populated" {
     try list.append('h');
     try list.append('i');
     try list.append('j');
-    var result = split(u8, &list, 3);
+    const result = split(u8, &list, 3);
     try std.testing.expectEqualSlices(u8, result.first.?, &[_]u8{ 'a', 'b', 'c' });
     try std.testing.expectEqualSlices(u8, result.second.?, &[_]u8{ 'd', 'e', 'f', 'g', 'h', 'i', 'j' });
 }
@@ -537,7 +537,7 @@ test "split second empty" {
     try list.append('b');
     try list.append('c');
     try list.append('d');
-    var result = split(u8, &list, 5);
+    const result = split(u8, &list, 5);
     try std.testing.expectEqualSlices(u8, result.first.?, &[_]u8{ 'a', 'b', 'c', 'd' });
     try std.testing.expectEqual(result.second, null);
 }
@@ -554,7 +554,7 @@ test getSlice {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     try list.appendSlice(&[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j' });
-    var actual = try getSlice(u8, &list, 2, 6);
+    const actual = try getSlice(u8, &list, 2, 6);
     try std.testing.expectEqualSlices(u8, actual, &[_]u8{ 'c', 'd', 'e', 'f', 'g' });
 
     try std.testing.expectError(error.IndexOutOfRange, getSlice(u8, &list, 10, 11));
@@ -574,9 +574,9 @@ fn reverseSlice(comptime T: type, list: []T) void {
 
 // #19. Rotate a list N places to the left (or right).
 fn rotate(comptime T: type, list: *std.ArrayList(T), offset: i32) void {
-    var list_length: i32 = @intCast(list.items.len);
-    var offset_truncated: usize = @intCast(@mod(offset, list_length));
-    var offset_sign = std.math.sign(offset);
+    const list_length: i32 = @intCast(list.items.len);
+    const offset_truncated: usize = @intCast(@mod(offset, list_length));
+    const offset_sign = std.math.sign(offset);
     if (offset_sign == 1) {
         reverseSlice(T, list.items[0 .. list.items.len - offset_truncated]);
         reverseSlice(T, list.items[list.items.len - offset_truncated ..]);
@@ -705,7 +705,7 @@ fn randSelect(comptime T: type, items: []const T, size: usize, allocator: std.me
 }
 
 test randSelect {
-    var randSlice = try randSelect(u8, &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' }, 3, std.testing.allocator);
+    const randSlice = try randSelect(u8, &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h' }, 3, std.testing.allocator);
     defer std.testing.allocator.free(randSlice);
     try std.testing.expectEqualSlices(u8, randSlice, &[_]u8{ 'c', 'd', 'a' });
 }
@@ -725,7 +725,7 @@ fn lotto_select(count: usize, max_number: usize, allocator: std.mem.Allocator) !
 }
 
 test lotto_select {
-    var drawn_numbers = try lotto_select(6, 49, std.testing.allocator);
+    const drawn_numbers = try lotto_select(6, 49, std.testing.allocator);
     defer std.testing.allocator.free(drawn_numbers);
     try std.testing.expectEqualSlices(usize, drawn_numbers, &[_]usize{ 16, 19, 17, 0, 24, 1 });
 }
@@ -736,8 +736,8 @@ fn shuffle(comptime T: type, slice: []T) void {
     var generator = std.rand.DefaultPrng.init(0);
     var i = slice.len - 1;
     while (i >= 1) : (i -= 1) {
-        var random_index = generator.random().uintAtMost(usize, i);
-        var temp = slice[i];
+        const random_index = generator.random().uintAtMost(usize, i);
+        const temp = slice[i];
         slice[i] = slice[random_index];
         slice[random_index] = temp;
     }
@@ -760,7 +760,7 @@ fn combinations(comptime T: type, slice: []const T, take_count: usize, allocator
     var x: usize = 0;
     var y: usize = 0;
     var z: i32 = 0;
-    var p: []i32 = try allocator.alloc(i32, N + 2);
+    const p: []i32 = try allocator.alloc(i32, N + 2);
     var b: []i32 = try allocator.alloc(i32, N);
     inittwiddle(K, N, p);
     var combination: []T = try allocator.alloc(T, take_count);
@@ -861,8 +861,8 @@ fn inittwiddle(m: usize, n: usize, p: []i32) void {
 }
 
 test combinations {
-    var input = "abcde";
-    var result = try combinations(u8, input, 2, std.testing.allocator);
+    const input = "abcde";
+    const result = try combinations(u8, input, 2, std.testing.allocator);
     defer {
         for (result) |combination| {
             std.testing.allocator.free(combination);
