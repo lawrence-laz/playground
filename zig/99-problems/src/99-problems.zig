@@ -881,3 +881,48 @@ test combinations {
     try std.testing.expectEqualSlices(u8, result[8], "ac");
     try std.testing.expectEqualSlices(u8, result[9], "ab");
 }
+
+test "#27. Group the elements of a set into disjoint subsets. (medium)" {
+    const input = "abcd";
+    var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = general_purpose_allocator.allocator();
+    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
+    const allocator = arena_allocator.allocator();
+    defer arena_allocator.deinit();
+    var results = std.ArrayList([][]u8).init(allocator);
+
+    const groups_of_2 = try combinations(u8, input, 2, allocator);
+    for (groups_of_2) |group_of_2| {
+        var remaining = std.ArrayList(u8).init(allocator);
+        for (input) |input_char| {
+            if (std.mem.indexOf(u8, group_of_2, &[_]u8{input_char})) |_| {} else {
+                try remaining.append(input_char);
+            }
+        }
+
+        const groups_of_1 = try combinations(u8, remaining.items, 1, allocator);
+        for (groups_of_1) |group_of_1| {
+            var result = std.ArrayList([]u8).init(allocator);
+            try result.append(group_of_2);
+            try result.append(group_of_1);
+            try results.append(result.items);
+        }
+    }
+
+    const expected: []const []const []const u8 = &.{
+        &.{ "cd", "b" },
+        &.{ "cd", "a" },
+        &.{ "ad", "c" },
+        &.{ "ad", "b" },
+        &.{ "bd", "c" },
+        &.{ "bd", "a" },
+        &.{ "bc", "d" },
+        &.{ "bc", "a" },
+        &.{ "ac", "d" },
+        &.{ "ac", "b" },
+        &.{ "ab", "d" },
+        &.{ "ab", "c" },
+    };
+
+    try std.testing.expectEqualDeep(expected, results.items);
+}
