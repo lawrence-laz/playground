@@ -926,3 +926,117 @@ test "#27. Group the elements of a set into disjoint subsets. (medium)" {
 
     try std.testing.expectEqualDeep(expected, results.items);
 }
+
+fn groups(
+    comptime T: type,
+    items: []const T,
+    group_sizes: []const usize,
+    allocator: std.mem.Allocator,
+) ![]const []const []const usize {
+    var results = std.ArrayList([]const []const usize).init(allocator);
+    const grouped_groups = std.ArrayList([]const usize).init(allocator);
+    const context = GroupsContext{
+        .allocator = allocator,
+        .group_sizes = group_sizes,
+        .group_index = 0,
+        .ungrouped_items = try range_usize(0, items.len, allocator),
+        .grouped_groups = grouped_groups.items,
+        .results = &results,
+    };
+    try groupsRecurse(context);
+    return results.items;
+}
+
+const GroupsContext = struct {
+    allocator: std.mem.Allocator,
+    group_sizes: []const usize,
+    group_index: usize,
+    ungrouped_items: []const usize,
+    grouped_groups: []const []const usize,
+    results: *std.ArrayList([]const []const usize),
+};
+
+fn groupsRecurse(context: GroupsContext) !void {
+    const group_size = context.group_sizes[context.group_index];
+    const group_variants = try combinations(
+        usize,
+        context.ungrouped_items,
+        group_size,
+        context.allocator,
+    );
+    for (group_variants) |group| {
+        var next_ungrouped_items = std.ArrayList(usize).init(context.allocator);
+        for (context.ungrouped_items) |ungrouped_item| {
+            if (std.mem.indexOf(usize, group, &.{ungrouped_item})) |_| {} else {
+                try next_ungrouped_items.append(ungrouped_item);
+            }
+        }
+        var next_grouped_groups = std.ArrayList([]const usize).init(context.allocator);
+        try next_grouped_groups.appendSlice(context.grouped_groups);
+        try next_grouped_groups.append(group);
+        const next_context = GroupsContext{
+            .allocator = context.allocator,
+            .group_sizes = context.group_sizes,
+            .group_index = context.group_index + 1,
+            .ungrouped_items = next_ungrouped_items.items,
+            .grouped_groups = next_grouped_groups.items,
+            .results = context.results,
+        };
+
+        if (next_context.group_index < context.group_sizes.len) {
+            try groupsRecurse(next_context);
+        } else {
+            try context.results.append(next_grouped_groups.items);
+        }
+    }
+}
+
+inline fn range_usize(from: usize, to: usize, allocator: std.mem.Allocator) ![]usize {
+    const size = @abs(to - from);
+    var range_values = std.ArrayList(usize).init(allocator);
+    for (0..size) |i| {
+        try range_values.append(from + i);
+    }
+    return range_values.items;
+}
+
+test "#27. Generalize the above function in a way that we can specify a list of group sizes and the function will return a list of groups." {
+    const input = "abcd";
+    var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = general_purpose_allocator.allocator();
+    var arena_allocator = std.heap.ArenaAllocator.init(gpa);
+    const allocator = arena_allocator.allocator();
+    defer arena_allocator.deinit();
+
+    const results = try groups(u8, input, &.{ 2, 1 }, allocator);
+
+    const expected: []const []const []const u8 = &.{
+        &.{ "cd", "b" },
+        &.{ "cd", "a" },
+        &.{ "ad", "c" },
+        &.{ "ad", "b" },
+        &.{ "bd", "c" },
+        &.{ "bd", "a" },
+        &.{ "bc", "d" },
+        &.{ "bc", "a" },
+        &.{ "ac", "d" },
+        &.{ "ac", "b" },
+        &.{ "ab", "d" },
+        &.{ "ab", "c" },
+    };
+
+    var actual = std.ArrayList([]const []const u8).init(allocator);
+    for (results) |group_variants| {
+        var group_variants_mutated = std.ArrayList([]const u8).init(allocator);
+        for (group_variants) |group| {
+            var group_mutated = std.ArrayList(u8).init(allocator);
+            for (group) |index| {
+                try group_mutated.append(input[index]);
+            }
+            try group_variants_mutated.append(group_mutated.items);
+        }
+        try actual.append(group_variants_mutated.items);
+    }
+
+    try std.testing.expectEqualDeep(expected, actual.items);
+}
