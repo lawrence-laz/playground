@@ -15,6 +15,11 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const enumerable = b.dependency("enumerable", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const lib = b.addStaticLibrary(.{
         .name = "99-problems",
         // In this case the main source file is merely a path, however, in more
@@ -23,6 +28,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib.root_module.addImport("enumerable", enumerable.module("enumerable"));
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -35,6 +41,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.root_module.addImport("enumerable", enumerable.module("enumerable"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -64,13 +71,17 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const tests_filter = b.option([]const u8, "filter", "Filter for tests to run");
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/99-problems.zig" },
         .target = target,
         .optimize = optimize,
+        .filter = tests_filter,
     });
+    lib_unit_tests.root_module.addImport("enumerable", enumerable.module("enumerable"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -79,6 +90,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe_unit_tests.root_module.addImport("enumerable", enumerable.module("enumerable"));
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

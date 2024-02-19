@@ -3,6 +3,7 @@
 // Source: https://v2.ocaml.org/learn/tutorials/99problems.html
 
 const std = @import("std");
+const enumerable = @import("enumerable");
 
 // #1 Write a function that returns the last element of a list.
 fn last(list: std.ArrayList(u8)) u8 {
@@ -965,15 +966,14 @@ fn groupsRecurse(context: GroupsContext) !void {
         context.allocator,
     );
     for (group_variants) |group| {
-        var next_ungrouped_items = std.ArrayList(usize).init(context.allocator);
-        for (context.ungrouped_items) |ungrouped_item| {
-            if (std.mem.indexOf(usize, group, &.{ungrouped_item})) |_| {} else {
-                try next_ungrouped_items.append(ungrouped_item);
-            }
-        }
-        var next_grouped_groups = std.ArrayList([]const usize).init(context.allocator);
-        try next_grouped_groups.appendSlice(context.grouped_groups);
-        try next_grouped_groups.append(group);
+        const next_ungrouped_items = try enumerable
+            .from(context.ungrouped_items)
+            .except(group)
+            .toArrayList(context.allocator);
+        const next_grouped_groups = try enumerable
+            .from(context.grouped_groups)
+            .append(group)
+            .toArrayList(context.allocator);
         const next_context = GroupsContext{
             .allocator = context.allocator,
             .group_sizes = context.group_sizes,
