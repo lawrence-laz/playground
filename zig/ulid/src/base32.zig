@@ -12,11 +12,15 @@ pub fn encodeBuf(input: []const u5, buffer: []u8) !void {
 }
 
 test encodeBuf {
-    var buffer: [2]u8 = undefined;
-    try encodeBuf(&[_]u5{ 10, 1 }, &buffer);
-    try std.testing.expectEqualSlices(u8, "A1", &buffer);
-    try encodeBuf(&[_]u5{ 28, 25 }, &buffer);
-    try std.testing.expectEqualSlices(u8, "WS", &buffer);
+    var buffer2: [2]u8 = undefined;
+    try encodeBuf(&[_]u5{ 10, 1 }, &buffer2);
+    try std.testing.expectEqualSlices(u8, "A1", &buffer2);
+    try encodeBuf(&[_]u5{ 28, 25 }, &buffer2);
+    try std.testing.expectEqualSlices(u8, "WS", &buffer2);
+
+    var buffer5: [5]u8 = undefined;
+    try encodeBuf(&[_]u5{ 0b01000, 0b00100, 0b11000, 0b10000, 0b0000 }, &buffer5);
+    try std.testing.expectEqualSlices(u8, "84RG0", &buffer5);
 }
 
 pub fn decodeBuf(input: []const u8, buffer: []u5) !void {
@@ -79,4 +83,8 @@ test decodeBuf {
     try std.testing.expectEqualSlices(u5, &[_]u5{ 10, 1 }, &buffer);
     try decodeBuf("WS", &buffer);
     try std.testing.expectEqualSlices(u5, &[_]u5{ 28, 25 }, &buffer);
+
+    var buffer5: [5]u5 = undefined;
+    try decodeBuf("84RG0", &buffer5);
+    try std.testing.expectEqualSlices(u5, &[_]u5{ 0b01000, 0b00100, 0b11000, 0b10000, 0b0000 }, &buffer5);
 }
