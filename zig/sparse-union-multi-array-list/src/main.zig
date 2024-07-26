@@ -2,16 +2,15 @@ const std = @import("std");
 const StructField = std.builtin.Type.StructField;
 const UnionField = std.builtin.Type.UnionField;
 
-/// Generates a type where each field is std.ArrayList of the given type fields.
+// MultiArrayList has a `std.ArrayList` field for each field in T.
 pub fn MultiArrayList(comptime T: type) type {
-    const given_fields = std.meta.fields(T);
-    var new_fields: [given_fields.len]StructField = undefined;
-    inline for (given_fields, 0..) |given_field, i| {
-        const field_name = given_field.name;
-        const FieldType = given_field.type;
+    const t_fields = std.meta.fields(T);
+    var multi_array_list_fields: [t_fields.len]StructField = undefined;
+    inline for (t_fields, 0..) |t_field, i| {
+        const FieldType = t_field.type;
         const default_undefined_value: std.ArrayList(FieldType) = undefined;
-        new_fields[i] = StructField{
-            .name = field_name,
+        multi_array_list_fields[i] = StructField{
+            .name = t_field.name,
             .type = std.ArrayList(FieldType),
             .default_value = &default_undefined_value,
             .is_comptime = false,
@@ -23,13 +22,13 @@ pub fn MultiArrayList(comptime T: type) type {
             .layout = .auto,
             .decls = &.{},
             .is_tuple = false,
-            .fields = &new_fields,
+            .fields = &multi_array_list_fields,
         },
     };
     return @Type(type_info);
 }
 
-/// Generates a type, where each field is a std.ArrayList for all possible union fields.
+/// SparseUnionMultiArrayList has a `std.ArrayList` field for each union field.
 pub fn SparseUnionMultiArrayList(comptime T: type) type {
     return struct {
         data: MultiArrayList(T),
@@ -37,8 +36,8 @@ pub fn SparseUnionMultiArrayList(comptime T: type) type {
         pub fn init(allocator: std.mem.Allocator) SparseUnionMultiArrayList(T) {
             var result: SparseUnionMultiArrayList(T) = .{ .data = .{} };
 
-            const t_fields = std.meta.fields(T);
-            inline for (t_fields) |field| {
+            const fields = std.meta.fields(T);
+            inline for (fields) |field| {
                 const union_field = @as(UnionField, field);
                 @field(result.data, union_field.name) = std.ArrayList(union_field.type).init(allocator);
             }
@@ -87,7 +86,7 @@ pub fn Iterator(comptime TView: type, comptime TSource: type) type {
             return result;
         }
 
-        /// Gets a type that stores iterator sources and indexes.
+        /// A type that stores iterator sources and indexes.
         pub fn State() type {
             const given_fields = std.meta.fields(TView);
             var new_fields: [given_fields.len * 2]StructField = undefined;
