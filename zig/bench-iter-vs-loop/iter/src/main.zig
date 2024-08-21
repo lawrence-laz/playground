@@ -78,8 +78,4 @@ pub fn main() !void {
             item.baz.id += 1;
         }
     }
-
-    for (bazs) |baz| {
-        std.debug.print("baz id={d} age={d}\n", .{ baz.id, baz.age });
-    }
 }

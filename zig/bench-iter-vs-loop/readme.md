@@ -2,6 +2,6 @@ This is a test to see how a regular loop compares to iterator in regards to perf
 
 Seems like for a basic scenario both are identical:
 ```
-loop:  Time (mean ± σ):      25.4 ms ±   0.3 ms    [User: 12.5 ms, System: 12.6 ms]
-iter:  Time (mean ± σ):      25.2 ms ±   0.3 ms    [User: 12.4 ms, System: 12.5 ms]
+loop:  Time (mean ± σ):       8.8 ms ±   0.2 ms    [User: 8.2 ms, System: 0.4 ms]
+iter:  Time (mean ± σ):       8.8 ms ±   0.2 ms    [User: 8.2 ms, System: 0.5 ms]
 ```
