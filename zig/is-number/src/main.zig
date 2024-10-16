@@ -1,44 +1,34 @@
 const std = @import("std");
 
 fn isNumber(text: []const u8) bool {
-    const State = enum(u3) {
-        init,
-        zero,
-        hex_prefix,
-        bin_prefix,
-        dec,
-        hex,
-        bin,
-        const Self = @This();
-        fn pack(self: Self, c: u8) u11 {
-            const combined: packed struct(u11) { c: u8, s: Self } = .{ .c = c, .s = self };
-            return @bitCast(combined);
-        }
-    };
+    const State = enum { init, zero, hex_prefix, bin_prefix, dec, hex, bin };
     var state: State = .init;
-    // TODO: Try rewrite this in 0.14 zig with labeled switch prongs
     for (text, 0..) |c, index| {
-        if (index == 0 and (c == '+' or c == '-')) continue;
-        state = switch (state.pack(c)) {
-            State.init.pack('0') => .zero,
-            State.init.pack('1')...State.init.pack('9') => .dec,
-            State.zero.pack('0')...State.zero.pack('0') => .dec,
-            State.zero.pack('x') => .hex_prefix,
-            State.zero.pack('b') => .bin_prefix,
-            State.hex_prefix.pack('0')...State.hex_prefix.pack('9'),
-            State.hex_prefix.pack('A')...State.hex_prefix.pack('F'),
-            State.hex_prefix.pack('a')...State.hex_prefix.pack('f'),
-            State.hex.pack('0')...State.hex.pack('9'),
-            State.hex.pack('A')...State.hex.pack('F'),
-            State.hex.pack('a')...State.hex.pack('f'),
-            => .hex,
-            State.bin_prefix.pack('0'),
-            State.bin_prefix.pack('1'),
-            State.bin.pack('0'),
-            State.bin.pack('1'),
-            => .bin,
-            State.dec.pack('0')...State.dec.pack('9') => .dec,
-            else => return false,
+        if (index == 0 and (c == '-' or c == '+')) continue;
+        state = switch (state) {
+            .init => switch (c) {
+                '0' => .zero,
+                '1'...'9' => .dec,
+                else => return false,
+            },
+            .zero => switch (c) {
+                '0'...'9' => .dec,
+                'x' => .hex_prefix,
+                'b' => .bin_prefix,
+                else => return false,
+            },
+            .hex_prefix, .hex => switch (c) {
+                '0'...'9', 'A'...'F', 'a'...'f' => .hex,
+                else => return false,
+            },
+            .bin_prefix, .bin => switch (c) {
+                '0', '1' => .bin,
+                else => return false,
+            },
+            .dec => switch (c) {
+                '0'...'9' => .dec,
+                else => return false,
+            },
         };
     }
     return switch (state) {
