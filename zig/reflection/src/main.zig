@@ -46,3 +46,25 @@ test "Get fields by postfix" {
         };
     }
 }
+
+test "Check if field is optional" {
+    const Foo = struct {
+        this_is_not_optional: i32,
+        this_is_optional: ?i32,
+    };
+
+    var is_first_field_optional: ?bool = null;
+    var is_second_field_optional: ?bool = null;
+
+    inline for (std.meta.fields(Foo), 0..) |field, i| {
+        const struct_field: std.builtin.Type.StructField = field;
+        if (i == 0) {
+            is_first_field_optional = std.meta.activeTag(@typeInfo(struct_field.type)) == .Optional;
+        } else if (i == 1) {
+            is_second_field_optional = std.meta.activeTag(@typeInfo(struct_field.type)) == .Optional;
+        } else unreachable;
+    }
+
+    try std.testing.expectEqual(false, is_first_field_optional.?);
+    try std.testing.expectEqual(true, is_second_field_optional.?);
+}
