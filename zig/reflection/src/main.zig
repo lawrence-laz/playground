@@ -28,3 +28,21 @@ test "Get type of a ptr" {
     const ptr_type_info = @typeInfo(@TypeOf(foo_ptr)).Pointer;
     try std.testing.expect(@hasField(ptr_type_info.child, "bar"));
 }
+
+test "Get fields by postfix" {
+    const Foo = struct {
+        hello: bool,
+        bye: bool,
+
+        aaa_system: usize,
+        bbb_system: usize,
+        ccc_system: usize,
+    };
+    inline for (std.meta.fields(Foo)) |field| {
+        comptime if (!std.mem.endsWith(u8, field.name, "_system")) {
+            if (!std.mem.eql(u8, field.name, "hello") and !std.mem.eql(u8, field.name, "bye")) {
+                @compileError(field.name);
+            }
+        };
+    }
+}
