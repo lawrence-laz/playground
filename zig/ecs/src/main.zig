@@ -1,74 +1,665 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const MultiTagArrayList = @import("multi_tag_array_list.zig").MultiTagArrayList;
 
 const Ecs = struct {
-    world: World,
     archetypes: Archetypes,
-    component_archetype_index: ComponentArchetypeIndexTable,
+    entities: EntityArchetypeIndexTable,
+    systems: Systems,
 
-    pub fn init(allocator: std.mem.Allocator) !Ecs {
-        return .{
-            .world = .{},
+    pub fn init(ecs: *Ecs, allocator: std.mem.Allocator) !void {
+        ecs.* = .{
             .archetypes = try Archetypes.init(allocator),
-            .component_archetype_index = ComponentArchetypeIndexTable.init(),
+            .entities = EntityArchetypeIndexTable.init(),
+            .systems = undefined,
         };
+        try Systems.init(&ecs.*.systems, allocator, ecs);
     }
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        self.component_archetype_index.deinit(allocator);
         self.archetypes.deinit(allocator);
-        self.world.area.entities.rows.deinit(allocator);
+        self.entities.rows.deinit(allocator);
+        self.systems.deinit(allocator);
     }
 
-    pub fn createEntity(self: *@This(), allocator: std.mem.Allocator) !EntityId {
-        self.world.area.entities.lock.lock();
-        defer self.world.area.entities.lock.unlock();
-        const entity_id: EntityId = @enumFromInt(self.world.area.entities.rows.count());
-        try self.world.area.entities.rows.put(allocator, entity_id, .{
-            .archetype_id = Archetypes.identity_id,
-            .entity_row_id = @enumFromInt(0), // Identity archetype has no rows.
-        });
-        return entity_id;
-    }
-
-    pub fn getArchetypeIdForComponentTags(self: *@This(), component_tags: []const ComponentTag) ?ArchetypeId {
-        for (self.archetypes.rows.values()) |archetype| {
-            const contains_all_components = blk: {
-                for (component_tags) |component_tag| {
-                    if (!std.mem.containsAtLeast(ComponentTag, archetype.component_tags.items, 1, &.{component_tag})) {
-                        break :blk false;
-                    }
-                }
-                break :blk true;
-            };
-            if (contains_all_components) {
-                return archetype.id;
-            }
-        }
-        return null;
+    pub fn handleError(self: *@This(), err: anytype) void {
+        _ = self;
+        std.log.err("Got error: {}", .{err});
+        @panic("whoops");
     }
 };
 
-const Archetypes = struct {
-    pub const identity_id: ArchetypeId = @enumFromInt(0);
-
-    rows: std.AutoArrayHashMapUnmanaged(ArchetypeId, Archetype) = .{},
-
-    pub fn init(allocator: std.mem.Allocator) !Archetypes {
-        var archetypes: Archetypes = .{};
-        try archetypes.rows.put(allocator, identity_id, .{ .id = @enumFromInt(archetypes.rows.count()) });
-        return archetypes;
+const ecs_utils = struct {
+    pub fn createEntityId() EntityId {
+        return EntityId.new();
     }
 
-    pub fn getPtr(self: @This(), id: ArchetypeId) *Archetype {
-        return self.rows.getPtr(id).?;
+    pub fn createEntityNow(allocator: std.mem.Allocator, id: EntityId, ecs: *Ecs) !void {
+        try ecs.entities.rows.put(allocator, id, .{
+            .archetype_id = Archetypes.empty_id,
+            .entity_row_id = @enumFromInt(0), // Identity archetype has no rows.
+        });
+        try addComponentsNow(allocator, id, &.{.{ .id = id }}, ecs);
     }
 
-    pub fn get(self: @This(), id: ArchetypeId) *Archetype {
-        return self.rows.get(id);
+    pub fn addComponentsNow(
+        allocator: std.mem.Allocator,
+        entity_id: EntityId,
+        components: []const Component,
+        ecs: *Ecs,
+    ) !void {
+        const entity = ecs.entities.getPtr(entity_id);
+        const current_archetype = ecs.archetypes.getPtr(entity.archetype_id);
+
+        for (components) |component| if (current_archetype.component_tags.contains(component)) @panic("how should existing duplicate components be handled?");
+
+        // Change archetype.
+        const prev_archetype_id = entity.archetype_id;
+        const new_archetype = blk: {
+            var archetype = current_archetype;
+            for (components) |component| {
+                const id = try archetype.getOrCreateSuperArchetypeId(allocator, component, ecs);
+                archetype = ecs.archetypes.getPtr(id);
+            }
+            break :blk archetype;
+        };
+        entity.archetype_id = new_archetype.id;
+
+        // Assume last row id in the new archetype table.
+        const prev_entity_row_id = entity.entity_row_id;
+        entity.entity_row_id = @enumFromInt(new_archetype.entityCount());
+
+        const prev_archetype = ecs.archetypes.getPtr(prev_archetype_id);
+        const prev_archetype_entity_count = prev_archetype.entityCount();
+
+        if (prev_archetype_entity_count > 0) {
+            // Replace last row's id in the prev archetype, since it will be swap-removed.
+            const last_entity_row_id = prev_archetype_entity_count - 1;
+            // TODO: This is not trivial to get, because usually you don't care about table order. Is swapRemove the correct thing, here?
+            // maybe there could be "vacant" bit?
+            for (ecs.entities.rows.values()) |*value| {
+                if (value.entity_row_id == @as(EntityRowId, @enumFromInt(last_entity_row_id)) and value.archetype_id == prev_archetype_id) {
+                    value.entity_row_id = prev_entity_row_id;
+                    break;
+                }
+            }
+        } else {
+            // Archetype contained a single row only and it was removed, there is nothing to update.
+        }
+
+        // Move component data from prev archetype table to the new one.
+        var prev_archetype_tags_iter = prev_archetype.component_tags.iterator();
+        while (prev_archetype_tags_iter.next()) |prev_tag| {
+            switch (prev_tag) {
+                inline else => |tag| {
+                    const removed_component = prev_archetype.components.getPtr(tag).swapRemove(@intFromEnum(prev_entity_row_id));
+                    try new_archetype.components.getPtr(tag).append(allocator, removed_component);
+                },
+            }
+        }
+
+        // Add the new components
+        for (components) |component| {
+            switch (component) {
+                inline else => |payload, tag| {
+                    try new_archetype.components.getPtr(tag).append(allocator, payload);
+                },
+            }
+        }
+    }
+
+    pub fn removeComponentNow(
+        allocator: std.mem.Allocator,
+        entity_id: EntityId,
+        component_tag_to_remove: ComponentTag,
+        ecs: *Ecs,
+    ) !void {
+        const entity = ecs.entities.getPtr(entity_id);
+        const archetype = ecs.archetypes.getPtr(entity.archetype_id);
+        if (!archetype.component_tags.contains(component_tag_to_remove)) {
+            return;
+        }
+
+        // Change archetype.
+        const prev_archetype = archetype;
+        const new_archetype_id = try prev_archetype.getOrCreateSubArchetypeId(allocator, component_tag_to_remove, ecs);
+        const new_archetype = ecs.archetypes.getPtr(new_archetype_id);
+        entity.archetype_id = new_archetype_id;
+
+        // Assume last row id in the new archetype table.
+        const prev_entity_row_id = entity.entity_row_id;
+        entity.entity_row_id = @enumFromInt(new_archetype.entityCount());
+
+        // Replace last row's id in the prev archetype, since it will be swap removed.
+        const last_entity_row_id = prev_archetype.entityCount() - 1;
+        for (ecs.entities.rows.values()) |*other_entity| {
+            if (other_entity.entity_row_id == @as(EntityRowId, @enumFromInt(last_entity_row_id))) {
+                other_entity.entity_row_id = prev_entity_row_id;
+                break;
+            }
+        }
+
+        // Move component data from prev archetype table to the new one.
+        var prev_archetype_tags_iter = prev_archetype.component_tags.iterator();
+        while (prev_archetype_tags_iter.next()) |prev_tag| {
+            switch (prev_tag) {
+                inline else => |tag| {
+                    const removed_component = prev_archetype.components.getPtr(tag).swapRemove(@intFromEnum(prev_entity_row_id));
+                    if (tag == component_tag_to_remove) {
+                        // The removed component is not added to the new table.
+                        continue;
+                    }
+                    try new_archetype.components.getPtr(tag).append(allocator, removed_component);
+                },
+            }
+        }
+    }
+
+    pub fn getComponent(entity_id: EntityId, comptime component_tag: ComponentTag, ecs: *const Ecs) ?std.meta.FieldType(Component, component_tag) {
+        const entity = ecs.entities.getPtr(entity_id);
+        const component_rows = ecs.archetypes.getPtr(entity.archetype_id).components.getPtr(component_tag).items;
+        return if (component_rows.len > @intFromEnum(entity.entity_row_id))
+            component_rows[@intFromEnum(entity.entity_row_id)]
+        else
+            null; // Entity's archetype does not contain the requested component.
+    }
+
+    pub fn getEntityComponentTags(entity_id: EntityId, ecs: *const Ecs) std.EnumSet(ComponentTag) {
+        const entity = ecs.entities.getPtr(entity_id);
+        const archetype = ecs.archetypes.getPtr(entity.archetype_id);
+        return archetype.component_tags;
+    }
+
+    pub fn getArchetypeId(self: EntityId, ecs: *const Ecs) ArchetypeId {
+        return ecs.entities.getPtr(self).archetype_id;
+    }
+
+    pub fn getArchetypeIdByComponentTags(ecs: *const Ecs, component_tags: []const ComponentTag) ?ArchetypeId {
+        var component_tags_set = std.EnumSet(ComponentTag).initMany(component_tags);
+        component_tags_set.setPresent(.id, true);
+        return ecs.archetypes.getIdByComponentTags(component_tags_set);
+    }
+};
+
+const Systems = struct {
+    ecs: *Ecs,
+    thread_pool: std.Thread.Pool,
+    contexts: struct {
+        worker_1: SystemContext,
+        worker_2: SystemContext,
+    },
+    iters: struct {
+        foo: foo_system.Iter,
+        bar: bar_system.Iter,
+        foo_bar: foo_bar_system.Iter,
+        invoice_calc: invoice_calc_system.Iter,
+        counter: counter_system.Iter,
+    },
+    iter_cache_id: usize,
+
+    pub fn init(system_runner: *Systems, allocator: std.mem.Allocator, ecs: *Ecs) !void {
+        system_runner.ecs = ecs;
+        try std.Thread.Pool.init(&system_runner.*.thread_pool, .{ .allocator = allocator });
+        system_runner.contexts = .{
+            .worker_1 = SystemContext.init(ecs),
+            .worker_2 = SystemContext.init(ecs),
+        };
+        system_runner.iters = .{
+            .foo = foo_system.Iter.init(ecs),
+            .bar = bar_system.Iter.init(ecs),
+            .foo_bar = foo_bar_system.Iter.init(ecs),
+            .invoice_calc = invoice_calc_system.Iter.init(ecs),
+            .counter = counter_system.Iter.init(ecs),
+        };
+        system_runner.iter_cache_id = 0;
     }
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.thread_pool.deinit();
+
+        self.contexts.worker_1.deinit(allocator);
+        self.contexts.worker_2.deinit(allocator);
+
+        self.iters.foo.deinit(allocator);
+        self.iters.bar.deinit(allocator);
+        self.iters.foo_bar.deinit(allocator);
+        self.iters.invoice_calc.deinit(allocator);
+        self.iters.counter.deinit(allocator);
+    }
+
+    // TODO: Make it so that `tick()` does not allocate?
+    pub fn tick(self: *@This(), allocator: std.mem.Allocator) !void {
+        try self.refreshIters(allocator);
+
+        {
+            var wait: std.Thread.WaitGroup = .{};
+            self.thread_pool.spawnWg(&wait, foo_system.tick, .{ allocator, &self.iters.foo, &self.contexts.worker_1 });
+            self.thread_pool.spawnWg(&wait, bar_system.tick, .{ &self.iters.bar, &self.contexts.worker_1 });
+            wait.wait();
+        }
+        try foo_bar_system.tick(&self.iters.foo_bar, &self.contexts.worker_1);
+        invoice_calc_system.tick(&self.iters.invoice_calc, &self.contexts.worker_1);
+        counter_system.tick(&self.iters.counter);
+        try entity_operations_system.tick(allocator, &self.contexts.worker_1);
+    }
+
+    fn refreshIters(self: *@This(), allocator: std.mem.Allocator) !void {
+        std.debug.assert(self.iter_cache_id <= self.ecs.archetypes.count()); // Archetypes are never deleted, so cache id is monotonically increasing.
+
+        if (self.iter_cache_id == self.ecs.archetypes.count()) {
+            // Iters are up to date, no new archetypes were created since last refresh.
+            return;
+        }
+
+        // New archetypes created since last cache refresh.
+        self.iter_cache_id = self.ecs.archetypes.count();
+        var iters = &self.iters;
+        const Iters = @TypeOf(self.iters);
+        inline for (std.meta.fields(Iters)) |iter_field| {
+            var iter = &@field(iters, iter_field.name);
+            try iter.refreshTables(allocator);
+        }
+    }
+};
+
+const SystemContext = struct {
+    entity_operations: std.ArrayListUnmanaged(EntityOperation),
+    ecs: *Ecs,
+
+    pub fn init(ecs: *Ecs) SystemContext {
+        return .{ .entity_operations = .{}, .ecs = ecs };
+    }
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.entity_operations.deinit(allocator);
+    }
+
+    pub fn createEntity(self: *@This(), allocator: std.mem.Allocator) EntityId {
+        const entity_id: EntityId = ecs_utils.createEntityId();
+        self.entity_operations.append(
+            allocator,
+            .{ .create_entity = .{ .entity_id = entity_id } },
+        ) catch |err| switch (err) {
+            error.OutOfMemory => self.ecs.handleError(err),
+        };
+        return entity_id;
+    }
+
+    pub fn deleteEntity(self: *@This(), allocator: std.mem.Allocator, entity_id: EntityId) void {
+        self.entity_operations.append(
+            allocator,
+            .{ .delete_entity = .{ .entity_id = entity_id } },
+        ) catch |err| switch (err) {
+            error.OutOfMemory => self.ecs.handleError(err),
+        };
+    }
+
+    pub fn addComponent(self: *@This(), allocator: std.mem.Allocator, entity_id: EntityId, component: Component) void {
+        self.entity_operations.append(
+            allocator,
+            .{ .add_component = .{ .entity_id = entity_id, .component = component } },
+        ) catch |err| switch (err) {
+            error.OutOfMemory => self.ecs.handleError(err),
+        };
+    }
+
+    pub fn removeComponent(self: *@This(), allocator: std.mem.Allocator, entity_id: EntityId, component_tag: ComponentTag) void {
+        self.entity_operations.append(
+            allocator,
+            .{ .remove_component = .{ .entity_id = entity_id, .component_tag = component_tag } },
+        ) catch |err| switch (err) {
+            error.OutOfMemory => self.ecs.handleError(err),
+        };
+    }
+};
+
+const entity_operations_system = struct {
+    pub fn tick(allocator: std.mem.Allocator, context: *SystemContext) !void {
+        inline for (std.meta.fields(@TypeOf(context.ecs.systems.contexts))) |context_field| {
+            const entity_operations: *std.ArrayListUnmanaged(EntityOperation) = &@field(context.ecs.systems.contexts, context_field.name).entity_operations;
+            for (entity_operations.items) |operation| switch (operation) {
+                .create_entity => |req| try ecs_utils.createEntityNow(allocator, req.entity_id, context.ecs),
+                .delete_entity => @panic("TODO"),
+                .add_component => |req| try ecs_utils.addComponentsNow(allocator, req.entity_id, &.{req.component}, context.ecs),
+                .add_many_components => @panic("TODO: this provides an iter, we need slice, once use case is here - figure it out"),
+                .remove_component => |req| try ecs_utils.removeComponentNow(allocator, req.entity_id, req.component_tag, context.ecs),
+            };
+            entity_operations.clearRetainingCapacity();
+        }
+    }
+};
+
+const counter_system = struct {
+    const Iter = EntityIter(struct {
+        marked: *void,
+        counter: *i32,
+    });
+
+    pub fn tick(iter: *Iter) void {
+        while (iter.next()) |entity| {
+            entity.counter.* += 1;
+        }
+    }
+};
+test counter_system {
+    var ecs: Ecs = undefined;
+    try Ecs.init(&ecs, std.testing.allocator);
+    defer ecs.deinit(std.testing.allocator);
+
+    const marked_entity = ecs_utils.createEntityId();
+    const unmarked_entity = ecs_utils.createEntityId();
+
+    try ecs_utils.createEntityNow(std.testing.allocator, marked_entity, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, marked_entity, &.{ .{ .counter = 0 }, .{ .marked = {} } }, &ecs);
+
+    try ecs_utils.createEntityNow(std.testing.allocator, unmarked_entity, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, unmarked_entity, &.{.{ .counter = 0 }}, &ecs);
+
+    try ecs.systems.tick(std.testing.allocator);
+
+    const marked_counter = ecs_utils.getComponent(marked_entity, .counter, &ecs).?;
+    const unmarked_counter = ecs_utils.getComponent(unmarked_entity, .counter, &ecs).?;
+
+    try std.testing.expectEqual(1, marked_counter);
+    try std.testing.expectEqual(0, unmarked_counter);
+}
+
+const foo_system = struct {
+    const Iter = EntityIter(struct {
+        id: *const EntityId,
+        foo: *Foo,
+    });
+
+    pub fn tick(allocator: std.mem.Allocator, iter: *Iter, context: *SystemContext) void {
+        while (iter.next()) |entity| {
+            if (entity.foo.foo >= 50) {
+                context.removeComponent(allocator, entity.id.*, .foo);
+            } else {
+                entity.foo.foo += 1;
+            }
+        }
+    }
+};
+
+const invoice_calc_system = struct {
+    const Iter = EntityIter(struct {
+        invoice: *Invoice,
+        discount: ?*const Discount,
+    });
+
+    pub fn tick(iter: *Iter, context: *SystemContext) void {
+        _ = context;
+        while (iter.next()) |entity| {
+            if (entity.discount) |discount| {
+                const amount = 100 * (1 - discount.percent);
+                entity.invoice.sum += @intFromFloat(@floor(amount));
+            } else {
+                entity.invoice.sum += 100;
+            }
+        }
+    }
+};
+
+test invoice_calc_system {
+    var ecs: Ecs = undefined;
+    try Ecs.init(&ecs, std.testing.allocator);
+    defer ecs.deinit(std.testing.allocator);
+
+    const no_discount_entity = ecs_utils.createEntityId();
+    const discount_entity = ecs_utils.createEntityId();
+
+    try ecs_utils.createEntityNow(std.testing.allocator, no_discount_entity, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, no_discount_entity, &.{.{ .invoice = .{ .sum = 0 } }}, &ecs);
+
+    try ecs_utils.createEntityNow(std.testing.allocator, discount_entity, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, discount_entity, &.{ .{ .invoice = .{ .sum = 0 } }, .{ .discount = .{ .percent = 0.2 } } }, &ecs);
+
+    try ecs.systems.tick(std.testing.allocator);
+
+    const no_discount_invoice = ecs_utils.getComponent(no_discount_entity, .invoice, &ecs).?;
+    const discount_invoice = ecs_utils.getComponent(discount_entity, .invoice, &ecs).?;
+
+    try std.testing.expectEqual(80, discount_invoice.sum);
+    try std.testing.expectEqual(100, no_discount_invoice.sum);
+}
+
+const bar_system = struct {
+    const Iter = EntityIter(struct {
+        id: *const EntityId,
+        bar: *Bar,
+    });
+
+    pub fn tick(iter: *Iter, context: *SystemContext) void {
+        _ = context;
+        while (iter.next()) |entity| {
+            entity.bar.bar += 1;
+            std.log.debug("    bar_system: ID:{}, bar:{d}", .{ entity.id, entity.bar.bar });
+        }
+    }
+};
+
+const foo_bar_system = struct {
+    const Iter = EntityIter(struct {
+        id: *const EntityId,
+        foo: *Foo,
+        bar: *Bar,
+    });
+
+    pub fn tick(iter: *Iter, context: *SystemContext) !void {
+        // _ = context;
+        while (iter.next()) |entity| {
+            entity.foo.foo += 1;
+            entity.bar.bar += 1;
+            std.log.debug("foo_bar_system: ID:{}, bar:{d}", .{ entity.id, entity.bar.bar });
+            const from_utils = ecs_utils.getComponent(entity.id.*, .bar, context.ecs).?;
+            std.log.debug("from getComponent: ID:{}, bar:{d}", .{ entity.id, from_utils.bar });
+        }
+    }
+};
+
+fn EntityIterTable(EntityView: type) type {
+    return struct {
+        archetype_id: ArchetypeId,
+        columns: EntityIterColumns(EntityView),
+
+        pub fn getRowCount(self: *const @This()) usize {
+            const first_field = std.meta.fields(@TypeOf(self.columns))[0];
+            return if (@field(self.columns, first_field.name)) |rows| return rows.items.len else return 0;
+        }
+    };
+}
+
+fn EntityIterColumns(EntityView: type) type {
+    const column_count = std.meta.fields(EntityView).len;
+    var fields: [column_count]std.builtin.Type.StructField = undefined;
+    inline for (std.meta.fields(EntityView), 0..) |field, i| {
+        const ItemType = switch (@typeInfo(field.type)) {
+            .Pointer => |ptr_info| ptr_info.child,
+            .Optional => |optional_info| switch (@typeInfo(optional_info.child)) {
+                .Pointer => |ptr_info| ptr_info.child,
+                else => @compileError("Entity view field '" ++ field.name ++ "' has unsupported type '" ++ @typeName(field.type) ++ "'"),
+            },
+            else => @compileError("Entity view field '" ++ field.name ++ "' has unsupported type '" ++ @typeName(field.type) ++ "'"),
+        };
+        const undefined_value: ?*std.ArrayListUnmanaged(ItemType) = undefined;
+        fields[i] = std.builtin.Type.StructField{
+            .name = field.name,
+            .type = ?*std.ArrayListUnmanaged(ItemType),
+            .default_value = @ptrCast(&undefined_value),
+            .is_comptime = false,
+            .alignment = @alignOf(?*std.ArrayListUnmanaged(ItemType)),
+        };
+    }
+    return @Type(std.builtin.Type{
+        .Struct = .{
+            .fields = &fields,
+            .decls = &.{},
+            .layout = .auto,
+            .is_tuple = false,
+        },
+    });
+}
+
+fn EntityIter(EntityViewRow: type) type {
+    return struct {
+        ecs: *const Ecs,
+        tables: std.ArrayListUnmanaged(EntityIterTable(EntityViewRow)),
+        table_id: usize = 0,
+        row_id: usize = 0,
+        cache_id: usize = 0, // When does not equal to ecs.archetypes.len, need to update tables.
+
+        pub fn init(ecs: *const Ecs) EntityIter(EntityViewRow) {
+            return .{ .ecs = ecs, .tables = .{} };
+        }
+
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            self.tables.deinit(allocator);
+        }
+
+        pub fn reset(self: *@This(), allocator: std.mem.Allocator) void {
+            if (self.cache_id < self.ecs.archetypes.count()) {
+                self.refreshTables(allocator);
+            }
+            self.table_id = 0;
+            self.row_id = 0;
+        }
+
+        pub fn next(self: *@This()) ?EntityViewRow {
+            table: while (self.table_id < self.tables.items.len) {
+                while (self.row_id < self.tables.items[self.table_id].getRowCount()) {
+                    const table = self.tables.items[self.table_id];
+                    const row_fields = std.meta.fields(EntityViewRow);
+                    var row: EntityViewRow = undefined;
+                    inline for (row_fields) |row_field| {
+                        const maybe_col = @field(table.columns, row_field.name);
+                        if (maybe_col != null) {
+                            const col = maybe_col.?;
+                            @field(row, row_field.name) = &col.items[self.row_id];
+                        } else {
+                            if (@typeInfo(row_field.type) == .Optional) {
+                                @field(row, row_field.name) = null;
+                            } else {
+                                unreachable; // Only optional types can have column be null as checked in refreshTables funciton.
+                            }
+                        }
+                    }
+                    self.row_id += 1;
+                    return row;
+                } else {
+                    // Done with current table
+                    self.table_id += 1;
+                    self.row_id = 0;
+                    continue :table;
+                }
+            } else {
+                // Done with all tables
+                self.row_id = 0;
+                self.table_id = 0;
+                return null;
+            }
+        }
+
+        fn refreshTables(self: *@This(), allocator: std.mem.Allocator) !void {
+            const view_cols = getEntityViewCols();
+            archetypes: for (self.ecs.archetypes.values()[self.cache_id..]) |*archetype| {
+                for (view_cols) |view_col| {
+                    if (!view_col.is_optional and !archetype.component_tags.contains(view_col.component_tag)) {
+                        // Skipping an achetype that does not contain a required (is_optional=false) component.
+                        continue :archetypes;
+                    }
+                }
+                var columns: EntityIterColumns(EntityViewRow) = .{};
+                inline for (std.meta.fields(EntityViewRow)) |field| {
+                    const component_tag = comptime std.meta.stringToEnum(ComponentTag, field.name) orelse @compileError("Field name does not match ComponentTag");
+                    if (archetype.component_tags.contains(component_tag)) {
+                        @field(columns, field.name) = archetype.components.getPtr(component_tag);
+                    } else {
+                        std.debug.assert(@typeInfo(field.type) == .Optional); // Only optional fields can have column collection null.
+                        @field(columns, field.name) = null; // This archetype does not contain the requested component, but the component is optional.
+                    }
+                }
+                try self.tables.append(allocator, .{
+                    .archetype_id = archetype.id,
+                    .columns = columns,
+                });
+            }
+            self.cache_id = self.ecs.archetypes.count();
+        }
+
+        const EntityViewCol = struct {
+            component_tag: ComponentTag,
+            is_optional: bool,
+        };
+        fn getEntityViewCols() [std.meta.fields(EntityViewRow).len]EntityViewCol {
+            var cols: [std.meta.fields(EntityViewRow).len]EntityViewCol = undefined;
+            inline for (std.meta.fields(EntityViewRow), 0..) |field, i| {
+                const component_tag = std.meta.stringToEnum(ComponentTag, field.name) orelse @panic("Field name does not match ComponentTag");
+                const is_optional = std.meta.activeTag(@typeInfo(field.type)) == .Optional;
+                cols[i] = .{ .component_tag = component_tag, .is_optional = is_optional };
+            }
+            return cols;
+        }
+    };
+}
+
+const Archetypes = struct {
+    pub const empty_id: ArchetypeId = @enumFromInt(0);
+
+    rows: std.AutoArrayHashMapUnmanaged(ArchetypeId, Archetype),
+    component_tags_index: std.AutoHashMapUnmanaged(std.EnumSet(ComponentTag), ArchetypeId),
+
+    pub fn init(allocator: std.mem.Allocator) !Archetypes {
+        var archetypes: Archetypes = .{
+            .rows = .{},
+            .component_tags_index = .{},
+        };
+        const empty_archetype = Archetype.init(@enumFromInt(archetypes.rows.count()), std.EnumSet(ComponentTag).initEmpty());
+        try archetypes.put(allocator, empty_id, empty_archetype);
+        return archetypes;
+    }
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        for (self.rows.values()) |*value| {
+            value.deinit(allocator);
+        }
         self.rows.deinit(allocator);
+        self.component_tags_index.deinit(allocator);
+    }
+
+    pub fn put(self: *@This(), allocator: std.mem.Allocator, id: ArchetypeId, archetype: Archetype) !void {
+        try self.rows.put(allocator, id, archetype);
+        errdefer _ = self.rows.swapRemove(id);
+        try self.component_tags_index.put(allocator, archetype.component_tags, id);
+    }
+
+    pub fn count(self: *const @This()) usize {
+        return self.rows.count();
+    }
+
+    pub fn values(self: *const @This()) []Archetype {
+        return self.rows.values();
+    }
+
+    pub fn getPtr(self: *const @This(), id: ArchetypeId) *Archetype {
+        return self.rows.getPtr(id).?;
+    }
+
+    pub fn get(self: *const @This(), id: ArchetypeId) Archetype {
+        return self.rows.get(id);
+    }
+
+    pub fn getIdByComponentTags(self: *const @This(), component_tags: std.EnumSet(ComponentTag)) ?ArchetypeId {
+        return self.component_tags_index.get(component_tags);
+    }
+
+    pub fn getOrCreatePtrByComponentTags(self: *@This(), allocator: std.mem.Allocator, component_tags: std.EnumSet(ComponentTag)) !*Archetype {
+        if (self.component_tags_index.get(component_tags)) |existing_archetype_id| {
+            return self.getPtr(existing_archetype_id);
+        } else {
+            const new_archetype = Archetype.init(@enumFromInt(self.rows.count()), component_tags);
+            try self.put(allocator, new_archetype.id, new_archetype);
+            return self.rows.getPtr(new_archetype.id).?;
+        }
     }
 };
 
@@ -79,11 +670,51 @@ const ArchetypeId = enum(usize) {
     }
 };
 
+/// Archetype represents a class of entities as defined by the components it owns.
+/// When an entity changes the components it has it is moved into another archetype.
 const Archetype = struct {
     id: ArchetypeId,
-    component_tags: std.ArrayListUnmanaged(ComponentTag) = .{},
-    super_archetypes: std.AutoHashMapUnmanaged(ComponentTag, ArchetypeId) = .{},
-    sub_archetypes: std.AutoHashMapUnmanaged(ComponentTag, ArchetypeId) = .{},
+    components: MultiTagArrayList(Component), // TODO: Rename from cols? what's better though?
+    component_tags: std.EnumSet(ComponentTag),
+    super_archetypes: std.AutoHashMapUnmanaged(ComponentTag, ArchetypeId),
+    sub_archetypes: std.AutoHashMapUnmanaged(ComponentTag, ArchetypeId),
+
+    pub fn init(id: ArchetypeId, component_tags: std.EnumSet(ComponentTag)) Archetype {
+        return .{
+            .id = id,
+            .components = MultiTagArrayList(Component).init(),
+            .component_tags = component_tags,
+            .super_archetypes = .{},
+            .sub_archetypes = .{},
+        };
+    }
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.components.deinit(allocator);
+        self.super_archetypes.deinit(allocator);
+        self.sub_archetypes.deinit(allocator);
+    }
+
+    pub fn entityCount(self: *const @This()) usize {
+        var tag_iter = self.component_tags.iterator();
+        if (tag_iter.next()) |first_tag| {
+            const first_component_count = self.components.count(first_tag);
+
+            if (builtin.mode == .Debug) {
+                var tags = self.component_tags.iterator();
+                while (tags.next()) |tag| {
+                    std.debug.assert(self.components.count(tag) == first_component_count); // All components should have the same amount of items.
+                }
+            }
+
+            return first_component_count;
+        } else {
+            // This is identity archetype without any components.
+            // Returning 0 entities for this archetype because cannot determine entity count by looking at empty tables.
+            // If there's ever a need to get actual empty entity count, then this would have to look into entity index.
+            return 0;
+        }
+    }
 
     pub fn getOrCreateSuperArchetypeId(
         self: *@This(),
@@ -91,17 +722,24 @@ const Archetype = struct {
         component_tag_to_add: ComponentTag,
         ecs: *Ecs,
     ) !ArchetypeId {
-        std.debug.assert(!std.mem.containsAtLeast(ComponentTag, self.component_tags.items, 1, &.{component_tag_to_add}));
+        std.debug.assert(!self.component_tags.contains(component_tag_to_add));
+
         if (self.super_archetypes.get(component_tag_to_add)) |super_archetype_id| {
+            // Link already exists
             return super_archetype_id;
         }
-        var super_archetype: Archetype = .{ .id = @enumFromInt(ecs.archetypes.rows.count()) };
-        try super_archetype.component_tags.appendSlice(allocator, self.component_tags.items);
-        try super_archetype.component_tags.append(allocator, component_tag_to_add);
+
+        // Create
+        var new_component_tags = self.component_tags;
+        new_component_tags.insert(component_tag_to_add);
+        var super_archetype = try ecs.archetypes.getOrCreatePtrByComponentTags(allocator, new_component_tags);
+
+        // Add back link to this
         try super_archetype.sub_archetypes.put(allocator, component_tag_to_add, self.id);
-        try ecs.archetypes.rows.put(allocator, super_archetype.id, super_archetype);
-        _ = try ArchetypeTable.init(allocator, super_archetype.id, ecs);
+
+        // Add link to new
         try self.super_archetypes.put(allocator, component_tag_to_add, super_archetype.id);
+
         return super_archetype.id;
     }
 
@@ -111,53 +749,61 @@ const Archetype = struct {
         component_tag_to_remove: ComponentTag,
         ecs: *Ecs,
     ) !ArchetypeId {
-        std.debug.assert(std.mem.containsAtLeast(ComponentTag, self.component_tags.items, 1, &.{component_tag_to_remove}));
+        std.debug.assert(self.component_tags.contains(component_tag_to_remove));
+
         if (self.sub_archetypes.get(component_tag_to_remove)) |sub_archetype_id| {
+            // Link already exists
             return sub_archetype_id;
         }
-        var sub_archetype: Archetype = .{ .id = @enumFromInt(ecs.archetypes.rows.count()) };
 
-        for (self.component_tags.items) |component_tag| {
-            if (component_tag == component_tag_to_remove) {
-                continue;
-            }
-            try sub_archetype.component_tags.append(allocator, component_tag);
-        }
+        // Create
+        var new_component_tags = self.component_tags;
+        new_component_tags.remove(component_tag_to_remove);
+        var sub_archetype = try ecs.archetypes.getOrCreatePtrByComponentTags(allocator, new_component_tags);
 
+        // Add back link to this
         try sub_archetype.super_archetypes.put(allocator, component_tag_to_remove, self.id);
-        try ecs.archetypes.rows.put(allocator, sub_archetype.id, sub_archetype);
-        _ = try ArchetypeTable.init(allocator, sub_archetype.id, ecs);
-        try self.super_archetypes.put(allocator, component_tag_to_remove, sub_archetype.id);
+
+        // Add link to new
+        try self.sub_archetypes.put(allocator, component_tag_to_remove, sub_archetype.id);
+
         return sub_archetype.id;
     }
 };
 
-const ComponentTag = enum(usize) { foo, bar, baz };
+const EntityOperation = union(enum) {
+    create_entity: struct { entity_id: EntityId },
+    delete_entity: struct { entity_id: EntityId },
+    add_component: struct { entity_id: EntityId, component: Component },
+    add_many_components: struct { entity_id: EntityId, components: std.EnumArray(ComponentTag, Component) },
+    remove_component: struct { entity_id: EntityId, component_tag: ComponentTag },
+};
 
+const ComponentTag = enum(usize) { id, foo, bar, baz, invoice, discount, counter, marked };
 const Component = union(ComponentTag) {
+    id: EntityId,
     foo: Foo,
     bar: Bar,
     baz: Baz,
+    invoice: Invoice,
+    discount: Discount,
+    counter: i32,
+    marked: void,
 
     const count = @typeInfo(ComponentTag).Enum.fields.len;
 };
 const Foo = struct { foo: i32 };
 const Bar = struct { bar: i32, bar2: bool };
 const Baz = struct { baz: []const u8 };
-
-const World = struct {
-    area: Area = .{},
-};
-
-const Area = struct {
-    id: usize = 0, // Ulid
-    entities: EntityArchetypeIndexTable = .{},
-    components: ArchetypeTables = .{},
-};
+const Invoice = struct { sum: i32 };
+const Discount = struct { percent: f32 };
 
 const EntityArchetypeIndexTable = struct {
-    rows: std.AutoHashMapUnmanaged(EntityId, EntityArchetypeIndexRow) = .{},
-    lock: std.Thread.RwLock = .{},
+    rows: std.AutoArrayHashMapUnmanaged(EntityId, EntityArchetypeIndexRow),
+
+    pub fn init() EntityArchetypeIndexTable {
+        return .{ .rows = .{} };
+    }
 
     pub fn getPtr(self: @This(), entity_id: EntityId) *EntityArchetypeIndexRow {
         return self.rows.getPtr(entity_id).?;
@@ -168,142 +814,15 @@ const EntityArchetypeIndexTable = struct {
     }
 };
 
-const EntityId = enum(usize) {
-    _,
-
-    pub fn jsonStringify(value: @This(), jws: anytype) !void {
-        try jws.write(@intFromEnum(value));
-    }
-
-    pub fn addComponent(
-        self: EntityId,
-        allocator: std.mem.Allocator,
-        component: Component,
-        ecs: *Ecs,
-    ) !void {
-        try self.addComponents(allocator, &.{component}, ecs);
-    }
-
-    pub fn addComponents(
-        self: EntityId,
-        allocator: std.mem.Allocator,
-        components: []const Component,
-        ecs: *Ecs,
-    ) !void {
-        ecs.world.area.entities.lock.lock();
-        defer ecs.world.area.entities.lock.unlock();
-        const entity = ecs.world.area.entities.getPtr(self);
-        const current_archetype = ecs.archetypes.getPtr(entity.archetype_id);
-        for (components) |component| {
-            if (std.mem.containsAtLeast(ComponentTag, current_archetype.component_tags.items, 1, &.{component})) {
-                return;
-            }
-        }
-
-        // Change archetype.
-        const prev_archetype_id = entity.archetype_id;
-        const prev_archetype = current_archetype;
-        const new_archetype_id = blk: {
-            var archetype = prev_archetype;
-            for (components) |component| {
-                const id = try archetype.getOrCreateSuperArchetypeId(allocator, component, ecs);
-                archetype = ecs.archetypes.getPtr(id);
-            }
-            break :blk archetype.id;
-        };
-        const new_archetype_table = ecs.world.area.components.getPtr(new_archetype_id).?;
-        entity.archetype_id = new_archetype_id;
-
-        // Assume last row id in the new archetype table.
-        const prev_entity_row_id = entity.entity_row_id;
-        entity.entity_row_id = @enumFromInt(new_archetype_table.columns.items[0].rows.items.len);
-
-        const maybe_prev_archetype_table = ecs.world.area.components.getPtr(prev_archetype_id);
-        if (maybe_prev_archetype_table) |prev_archetype_table| {
-            // Replace last row's id in the prev archetype, since it will be swap removed.
-            const last_entity_row_id = prev_archetype_table.columns.items[0].rows.items.len - 1;
-            var last_entity = ecs.world.area.entities.getPtr(@enumFromInt(last_entity_row_id));
-            last_entity.entity_row_id = prev_entity_row_id;
-
-            // Move component data from prev archetype table to the new one.
-            for (prev_archetype_table.columns.items) |*column| {
-                const removed_component = column.rows.swapRemove(@intFromEnum(prev_entity_row_id));
-                const new_column_id = ecs.component_archetype_index.get(new_archetype_id, column.tag).component_column_id;
-                var new_archetype_table_rows = &new_archetype_table.getColumnPtr(new_column_id).rows;
-                try new_archetype_table_rows.append(allocator, removed_component);
-            }
-        }
-
-        // Add the new components
-        for (components) |component| {
-            const column_id = ecs.component_archetype_index.get(new_archetype_id, component).component_column_id;
-            try new_archetype_table.getColumnPtr(column_id).rows.append(allocator, component);
-        }
-    }
-
-    pub fn removeComponent(
-        self: EntityId,
-        allocator: std.mem.Allocator,
-        component_tag_to_remove: ComponentTag,
-        ecs: *Ecs,
-    ) !void {
-        const entity = ecs.world.area.entities.getPtr(self);
-        const archetype = ecs.archetypes.getPtr(entity.archetype_id);
-        if (!std.mem.containsAtLeast(ComponentTag, archetype.component_tags.items, 1, &.{component_tag_to_remove})) {
-            return;
-        }
-
-        // Change archetype.
-        const prev_archetype_id = entity.archetype_id;
-        const prev_archetype = archetype;
-        const new_archetype_id = try prev_archetype.getOrCreateSubArchetypeId(allocator, component_tag_to_remove, ecs);
-        const new_archetype_table = ecs.world.area.components.getPtr(new_archetype_id).?;
-        entity.archetype_id = new_archetype_id;
-
-        // Assume last row id in the new archetype table.
-        const prev_entity_row_id = entity.entity_row_id;
-        entity.entity_row_id = @enumFromInt(new_archetype_table.columns.items[0].rows.items.len);
-
-        const maybe_prev_archetype_table = ecs.world.area.components.getPtr(prev_archetype_id);
-        if (maybe_prev_archetype_table) |prev_archetype_table| {
-            // Replace last row's id in the prev archetype, since it will be swap removed.
-            const last_entity_row_id = prev_archetype_table.columns.items[0].rows.items.len - 1;
-            var last_entity = ecs.world.area.entities.getPtr(@enumFromInt(last_entity_row_id));
-            last_entity.entity_row_id = prev_entity_row_id;
-
-            // Move component data from prev archetype table to the new one.
-            for (prev_archetype_table.columns.items) |*column| {
-                const removed_component = column.rows.swapRemove(@intFromEnum(prev_entity_row_id));
-                if (column.tag == component_tag_to_remove) {
-                    // The removed component is not added to the new table.
-                    continue;
-                }
-                const new_column_id = ecs.component_archetype_index.get(new_archetype_id, column.tag).component_column_id;
-                var new_archetype_table_rows = &new_archetype_table.getColumnPtr(new_column_id).rows;
-                try new_archetype_table_rows.append(allocator, removed_component);
-            }
-        }
-    }
-
-    pub fn getComponent(self: EntityId, component_tag: ComponentTag, ecs: *const Ecs) ?Component {
-        const entity = ecs.world.area.entities.getPtr(self);
-        const column_id = ecs.component_archetype_index.get(entity.archetype_id, component_tag).component_column_id;
-        return ecs.world.area.components
-            .getPtr(entity.archetype_id).?
-            .getColumnPtr(column_id)
-            .rows.items[@intFromEnum(entity.entity_row_id)];
-    }
-
-    pub fn getArchetypeId(self: EntityId, ecs: *const Ecs) ArchetypeId {
-        return ecs.world.area.entities.getPtr(self).archetype_id;
-    }
-};
+const EntityId = @import("ulid.zig").Ulid;
 
 const EntityArchetypeIndexRow = struct {
     archetype_id: ArchetypeId,
     entity_row_id: EntityRowId,
 };
 
+/// Entity's row id in archetype table.
+/// This changes when an entity is moved from one archetype into another.
 const EntityRowId = enum(usize) {
     _,
 
@@ -312,156 +831,90 @@ const EntityRowId = enum(usize) {
     }
 };
 
-const ComponentArchetypeIndexTable = struct {
-    rows: [Component.count]std.AutoHashMapUnmanaged(ArchetypeId, ComponentArchetypeIndexRow) = .{.{}} ** Component.count,
-
-    pub fn init() @This() {
-        return .{};
-    }
-
-    pub fn get(self: @This(), archetype_id: ArchetypeId, component_tag: ComponentTag) ComponentArchetypeIndexRow {
-        const index = @intFromEnum(component_tag);
-        return self.rows[index].get(archetype_id).?;
-    }
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        for (&self.rows) |*item| {
-            item.deinit(allocator);
-        }
-    }
-};
-
-const ComponentArchetypeIndexRow = struct {
-    component_column_id: ComponentColumnId,
-};
-
-const ArchetypeTables = struct {
-    tables: std.AutoArrayHashMapUnmanaged(ArchetypeId, ArchetypeTable) = .{},
-
-    pub fn getPtr(self: *const @This(), archetype_id: ArchetypeId) ?*ArchetypeTable {
-        return self.tables.getPtr(archetype_id);
-    }
-
-    pub fn get(self: *const @This(), archetype_id: ArchetypeId) ?*ArchetypeTable {
-        return self.tables.get(archetype_id);
-    }
-};
-
-const ArchetypeTable = struct {
-    columns: std.ArrayListUnmanaged(ComponentColumn) = .{},
-
-    pub fn init(allocator: std.mem.Allocator, archetype_id: ArchetypeId, ecs: *Ecs) !ArchetypeTable {
-        var table: ArchetypeTable = .{};
-        const archetype = ecs.archetypes.getPtr(archetype_id);
-        for (archetype.component_tags.items, 0..) |component_tag, i| {
-            try table.columns.append(allocator, .{ .tag = component_tag });
-            try ecs.component_archetype_index
-                .rows[@intFromEnum(component_tag)]
-                .put(allocator, archetype.id, .{ .component_column_id = @enumFromInt(i) });
-        }
-        try ecs.world.area.components.tables.put(allocator, archetype.id, table);
-        return table;
-    }
-
-    pub fn getColumnPtr(self: @This(), component_column_id: ComponentColumnId) *ComponentColumn {
-        return &self.columns.items[@intFromEnum(component_column_id)];
-    }
-};
-
-const ComponentColumnId = enum(usize) {
-    _,
-
-    pub fn jsonStringify(value: @This(), jws: anytype) !void {
-        try jws.write(@intFromEnum(value));
-    }
-};
-
-const ComponentColumn = struct {
-    tag: ComponentTag,
-    rows: std.ArrayListUnmanaged(Component) = .{},
-};
-
 test "archetypes of components of entities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var ecs = try Ecs.init(arena.allocator());
+    var ecs: Ecs = undefined;
+    try Ecs.init(&ecs, arena.allocator());
     defer ecs.deinit(arena.allocator());
 
-    // TODO: handle locking (do test with threads?)
-    const foobar_entity = try ecs.createEntity(arena.allocator());
-    try foobar_entity.addComponents(arena.allocator(), &.{
+    const foobar_entity = ecs_utils.createEntityId();
+    try ecs_utils.createEntityNow(arena.allocator(), foobar_entity, &ecs);
+    try ecs_utils.addComponentsNow(arena.allocator(), foobar_entity, &.{
         .{ .foo = .{ .foo = 1 } },
         .{ .bar = .{ .bar = 456, .bar2 = true } },
     }, &ecs);
 
     // Adding and removing some component.
-    try foobar_entity.addComponent(arena.allocator(), .{ .baz = .{ .baz = "woo" } }, &ecs);
-    try foobar_entity.removeComponent(arena.allocator(), .baz, &ecs);
+    try ecs_utils.addComponentsNow(arena.allocator(), foobar_entity, &.{.{ .baz = .{ .baz = "woo" } }}, &ecs);
+    try ecs_utils.removeComponentNow(arena.allocator(), foobar_entity, .baz, &ecs);
 
-    const foobar_entity2 = try ecs.createEntity(arena.allocator());
-    try foobar_entity2.addComponents(arena.allocator(), &.{
+    const foobar_entity2 = ecs_utils.createEntityId();
+    try ecs_utils.createEntityNow(arena.allocator(), foobar_entity2, &ecs);
+    try ecs_utils.addComponentsNow(arena.allocator(), foobar_entity2, &.{
         .{ .foo = .{ .foo = 2 } },
         .{ .bar = .{ .bar = 456, .bar2 = true } },
     }, &ecs);
 
-    try std.testing.expect(foobar_entity != foobar_entity2);
-    try std.testing.expectEqual(foobar_entity.getArchetypeId(&ecs), foobar_entity2.getArchetypeId(&ecs));
-    const foobar_row_id = ecs.world.area.entities.getPtr(foobar_entity).entity_row_id;
+    try std.testing.expect(!foobar_entity.equals(foobar_entity2));
+
+    try std.testing.expectEqual(ecs_utils.getArchetypeId(foobar_entity, &ecs), ecs_utils.getArchetypeId(foobar_entity2, &ecs));
+    const foobar_row_id = ecs.entities.getPtr(foobar_entity).entity_row_id;
     try std.testing.expectEqual(0, @intFromEnum(foobar_row_id));
-    const foobar2_row_id = ecs.world.area.entities.getPtr(foobar_entity2).entity_row_id;
+    const foobar2_row_id = ecs.entities.getPtr(foobar_entity2).entity_row_id;
     try std.testing.expectEqual(1, @intFromEnum(foobar2_row_id));
 
-    const foo_entity = try ecs.createEntity(arena.allocator());
-    try foo_entity.addComponent(arena.allocator(), .{ .foo = .{ .foo = 3 } }, &ecs);
-    try std.testing.expectEqual(ecs.getArchetypeIdForComponentTags(&.{.foo}).?, foo_entity.getArchetypeId(&ecs));
-    const foo_entity_index = ecs.world.area.entities.getPtr(foo_entity);
+    const foo_entity = ecs_utils.createEntityId();
+    try ecs_utils.createEntityNow(arena.allocator(), foo_entity, &ecs);
+    try ecs_utils.addComponentsNow(arena.allocator(), foo_entity, &.{.{ .foo = .{ .foo = 3 } }}, &ecs);
+    try std.testing.expectEqual(ecs_utils.getArchetypeIdByComponentTags(&ecs, &.{.foo}).?, ecs_utils.getArchetypeId(foo_entity, &ecs));
+    const foo_entity_index = ecs.entities.getPtr(foo_entity);
     try std.testing.expectEqual(0, @intFromEnum(foo_entity_index.entity_row_id));
 
-    const foo1 = foobar_entity.getComponent(.foo, &ecs).?.foo.foo;
+    const foo1 = ecs_utils.getComponent(foobar_entity, .foo, &ecs).?.foo;
     try std.testing.expectEqual(1, foo1);
-    const foo2 = foobar_entity2.getComponent(.foo, &ecs).?.foo.foo;
+    const foo2 = ecs_utils.getComponent(foobar_entity2, .foo, &ecs).?.foo;
     try std.testing.expectEqual(2, foo2);
-    const foo3 = foo_entity.getComponent(.foo, &ecs).?.foo.foo;
+    const foo3 = ecs_utils.getComponent(foo_entity, .foo, &ecs).?.foo;
     try std.testing.expectEqual(3, foo3);
 }
 
-var mutex: std.Thread.Mutex = .{};
+test "run systems" {
+    var ecs: Ecs = undefined;
+    try Ecs.init(&ecs, std.testing.allocator);
+    defer ecs.deinit(std.testing.allocator);
 
-pub fn createFooBarEntity(allocator: std.mem.Allocator, ecs: *Ecs) !void {
-    mutex.lock();
-    defer mutex.unlock();
-    var entity = try ecs.createEntity(allocator);
-    try entity.addComponents(allocator, &.{
-        .{ .foo = .{ .foo = 123 } },
-        .{ .bar = .{ .bar = 123, .bar2 = true } },
-        .{ .baz = .{ .baz = "hello" } },
-    }, ecs);
-    try entity.removeComponent(allocator, .baz, ecs);
-}
+    // Create entities and components
+    const foo_id = EntityId.new();
+    try ecs_utils.createEntityNow(std.testing.allocator, foo_id, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, foo_id, &.{
+        .{ .foo = .{ .foo = 0 } },
+    }, &ecs);
 
-test "multithreaded" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
+    const bar_id = EntityId.new();
+    try ecs_utils.createEntityNow(std.testing.allocator, bar_id, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, bar_id, &.{
+        .{ .bar = .{ .bar = 0, .bar2 = false } },
+    }, &ecs);
 
-    var ecs = try Ecs.init(arena.allocator());
-    defer ecs.deinit(arena.allocator());
+    const foo_bar_id = EntityId.new();
+    try ecs_utils.createEntityNow(std.testing.allocator, foo_bar_id, &ecs);
+    try ecs_utils.addComponentsNow(std.testing.allocator, foo_bar_id, &.{
+        .{ .bar = .{ .bar = 0, .bar2 = false } },
+        .{ .foo = .{ .foo = 0 } },
+    }, &ecs);
 
-    var threads = std.ArrayListUnmanaged(std.Thread){};
+    // Run systems
     var i: usize = 0;
-    while (i < 64) : (i += 1) {
-        try threads.append(
-            arena.allocator(),
-            try std.Thread.spawn(.{}, createFooBarEntity, .{ arena.allocator(), &ecs }),
-        );
+    while (i < 100) : (i += 1) {
+        try ecs.systems.tick(std.testing.allocator);
     }
-    for (threads.items) |thread| {
-        thread.join();
-    }
-    const archetypeId = ecs.getArchetypeIdForComponentTags(&.{ .foo, .bar }).?;
-    const column_id = ecs.component_archetype_index.get(archetypeId, .foo).component_column_id;
-    try std.testing.expectEqual(
-        64,
-        ecs.world.area.components.getPtr(archetypeId).?.columns.items[@intFromEnum(column_id)].rows.items.len,
-    );
+
+    // Assert
+    try std.testing.expectEqual(null, ecs_utils.getComponent(foo_id, .foo, &ecs));
+    try std.testing.expectEqual(100, ecs_utils.getComponent(bar_id, .bar, &ecs).?.bar);
+    try std.testing.expectEqual(null, ecs_utils.getComponent(foo_bar_id, .foo, &ecs));
+    const foobar = ecs_utils.getComponent(foo_bar_id, .bar, &ecs);
+    try std.testing.expectEqual(126, foobar.?.bar);
 }

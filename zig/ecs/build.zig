@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    // const should_run_test = b.option(bool, "runtest", "when false test is built but not ran");
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const exe_unit_tests = b.addTest(.{
