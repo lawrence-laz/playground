@@ -1,0 +1,7 @@
+|              Method |     Mean |    Error |   StdDev |   Gen0 | Allocated |
+|-------------------- |---------:|---------:|---------:|-------:|----------:|
+|       New_SB_Append | 21.23 ns | 0.048 ns | 0.045 ns | 0.0181 |     152 B |
+| New_SB_AppendFormat | 43.27 ns | 0.092 ns | 0.086 ns | 0.0181 |     152 B |
+|    Reused_SB_Append | 12.44 ns | 0.025 ns | 0.023 ns | 0.0057 |      48 B |
+|       String_Format | 40.10 ns | 0.203 ns | 0.190 ns | 0.0057 |      48 B |
+
