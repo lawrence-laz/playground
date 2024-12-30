@@ -21,6 +21,14 @@ test "Check at comptime if function returns error" {
     call(functionWithoutError);
 }
 
+test "get hashmap key and value types" {
+    var hashmap: std.AutoHashMapUnmanaged(u32, f32) = .{};
+    defer hashmap.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@typeInfo(@typeInfo(@TypeOf(@TypeOf(hashmap).getKey)).Fn.return_type.?).Optional.child, u32);
+    try std.testing.expectEqual(@typeInfo(@typeInfo(@TypeOf(@TypeOf(hashmap).get)).Fn.return_type.?).Optional.child, f32);
+}
+
 test "Get type of a ptr" {
     const Foo = struct { bar: usize };
     const foo: Foo = .{ .bar = 123 };
