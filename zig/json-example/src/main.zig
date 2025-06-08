@@ -107,3 +107,13 @@ test "stringify open enum" {
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings("123", json);
 }
+
+test "stringify hashmap" {
+    var hashmap: std.AutoHashMapUnmanaged(u32, u32) = .{};
+    defer hashmap.deinit(std.testing.allocator);
+    try hashmap.put(std.testing.allocator, 123, 456);
+    try hashmap.put(std.testing.allocator, 456, 678);
+    const json = try std.json.stringifyAlloc(std.testing.allocator, hashmap, .{});
+    defer std.testing.allocator.free(json);
+    std.log.debug("{s}", .{json});
+}

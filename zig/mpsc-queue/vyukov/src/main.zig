@@ -62,6 +62,7 @@ pub fn main() !void {
     var thread_pool: std.Thread.Pool = undefined;
     defer thread_pool.deinit();
     try std.Thread.Pool.init(&thread_pool, .{ .allocator = gpa.allocator() });
+    const start_time = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < count) : (i += 1) {
         try thread_pool.spawn(produce, .{ &queue, &items[i] });
@@ -70,4 +71,6 @@ pub fn main() !void {
     while (queue.pop()) |item| {
         _ = item;
     }
+    const end_time = std.time.nanoTimestamp();
+    std.debug.print("TOTAL TIME: {}\n", .{std.fmt.fmtDuration(@intCast(end_time - start_time))});
 }

@@ -29,6 +29,14 @@ test "get hashmap key and value types" {
     try std.testing.expectEqual(@typeInfo(@typeInfo(@TypeOf(@TypeOf(hashmap).get)).Fn.return_type.?).Optional.child, f32);
 }
 
+test "check if type is stringhashmap" {
+    var hashmap: std.StringHashMapUnmanaged(bool) = .{};
+    defer hashmap.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@typeInfo(@typeInfo(@TypeOf(@TypeOf(hashmap).getKey)).Fn.return_type.?).Optional.child, []const u8);
+    try std.testing.expectEqual(@typeInfo(@typeInfo(@TypeOf(@TypeOf(hashmap).get)).Fn.return_type.?).Optional.child, bool);
+}
+
 test "Get type of a ptr" {
     const Foo = struct { bar: usize };
     const foo: Foo = .{ .bar = 123 };
