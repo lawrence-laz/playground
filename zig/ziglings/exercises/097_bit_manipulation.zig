@@ -1,5 +1,5 @@
 //
-// Bit manipulations is a very powerful tool just also from Zig.
+// Bit manipulation is a very powerful tool, also from Zig.
 // Since the dawn of the computer age, numerous algorithms have been
 // developed that solve tasks solely by moving, setting, or logically
 // combining bits.
@@ -8,10 +8,10 @@
 // functions where possible. And it is often possible with calculations
 // based on integers.
 //
-// Often it is not easy to understand at first glance what exactly these
+// At first glance, it is often not easy to understand what exactly these
 // algorithms do when only "numbers" in memory areas change outwardly.
-// But it must never be forgotten that the numbers only represent the
-// interpretation of the bit sequences.
+// However, it should never be forgotten that the numbers only represent
+// the interpretation of the bit sequences.
 //
 // Quasi the reversed case we have otherwise, namely that we represent
 // numbers in bit sequences.
@@ -21,7 +21,7 @@
 // Zig provides all the necessary functions to change the bits inside
 // a variable. It is distinguished whether the bit change leads to an
 // overflow or not. The details are in the Zig documentation in section
-// 10.1 "Table of Operators".
+// "Table of Operators".
 //
 // Here are some examples of how the bits of variables can be changed:
 //
@@ -71,9 +71,9 @@ const print = std.debug.print;
 
 pub fn main() !void {
 
-    // As in the example above, we use 1 and 0 as values for x and y
-    var x: u8 = 1;
-    var y: u8 = 0;
+    // Let us use 1101 and 1011 as values for x and y
+    var x: u8 = 0b1101;
+    var y: u8 = 0b1011;
 
     // Now we swap the values of the two variables by doing xor on them
     x ^= y;
@@ -82,7 +82,7 @@ pub fn main() !void {
     // What must be written here?
     ???;
 
-    print("x = {d}; y = {d}\n", .{ x, y });
+    print("x = {b}; y = {b}\n", .{ x, y });
 }
 
 // This variable swap takes advantage of the fact that the value resulting

@@ -7,7 +7,7 @@
 // doing this work.
 //
 // An 'inline for' is performed at compile time, allowing you to
-// programatically loop through a series of items in situations
+// programmatically loop through a series of items in situations
 // like those mentioned above where a regular runtime 'for' loop
 // wouldn't be allowed:
 //
@@ -38,7 +38,7 @@ pub fn main() void {
     // Please use an 'inline for' to implement the block below
     // for each field in the slice 'fields'!
 
-    const fields = @typeInfo(Narcissus).Struct.fields;
+    const fields = @typeInfo(Narcissus).@"struct".fields;
 
     ??? {
         if (field.type != void) {

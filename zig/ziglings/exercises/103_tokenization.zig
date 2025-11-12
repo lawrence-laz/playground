@@ -1,9 +1,9 @@
 //
 // The functionality of the standard library is becoming increasingly
-// important in Zig. On the one hand, it is helpful to look at how
+// important in Zig. First of all, it is helpful to take a look at how
 // the individual functions are implemented. Because this is wonderfully
-// suitable as a template for your own functions. On the other hand,
-// these standard functions are part of the basic equipment of Zig.
+// suitable as a template for your own functions. In addition these
+// standard functions are part of the basic configuration of Zig.
 //
 // This means that they are always available on every system.
 // Therefore it is worthwhile to deal with them also in Ziglings.
@@ -119,9 +119,9 @@
 // after all we need some practice. Suppose we want to count the words
 // of this little poem:
 //
-// 	My name is Ozymandias, King of Kings;
-// 	Look on my Works, ye Mighty, and despair!
-// 	 by Percy Bysshe Shelley
+//      My name is Ozymandias, King of Kings;
+//      Look on my Works, ye Mighty, and despair!
+//            by Percy Bysshe Shelley
 //
 //
 const std = @import("std");
